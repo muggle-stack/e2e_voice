@@ -1,4 +1,4 @@
-# SpaceMIT AI C++ 智能语音对话系统
+# End_to_End C++ 智能语音对话系统
 
 一个完整的中文智能语音对话系统，集成了自动语音识别(ASR)、大语言模型(LLM)和文本转语音(TTS)功能，支持实时语音交互。
 
@@ -80,14 +80,14 @@ sudo systemctl start ollama
 
 # 下载推荐模型
 ollama pull qwen2.5:0.5b  # 轻量级模型
-ollama pull qwen2.5       # 标准模型
+ollama pull qwen2.5       # 标准模型（可选）
 ```
 
 ### 3. 构建项目
 ```bash
 # 克隆项目
-git clone git@gitlab.dc.com:bianbu/ai/ai.git
-cd ai
+git clone https://github.com/muggle-stack/ETE_Voice.git
+cd ETE_Voice
 
 # 构建
 ./build.sh
