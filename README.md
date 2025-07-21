@@ -1,4 +1,4 @@
-# ASR-LLM-TTS C++ 智能语音对话系统
+# SpaceMIT AI C++ 智能语音对话系统
 
 一个完整的中文智能语音对话系统，集成了自动语音识别(ASR)、大语言模型(LLM)和文本转语音(TTS)功能，支持实时语音交互。
 
@@ -6,6 +6,7 @@
 
 ### 🔊 完整的语音对话链路
 - **ASR (语音识别)**：基于SenseVoice模型的中文语音识别
+- **音频文件处理**：专用于音频文件批量处理的轻量级引擎
 - **LLM (大语言模型)**：集成Ollama支持多种开源模型
 - **TTS (文本转语音)**：基于Matcha-TTS的高质量语音合成
 - **流式处理**：LLM流式输出+实时TTS播放，自然对话体验
@@ -13,6 +14,7 @@
 ### 🛠️ 技术特性
 - **C++高性能实现**：使用ONNX Runtime进行模型推理
 - **模块化设计**：ASR、LLM、TTS可独立使用或组合
+- **TTS API接口**：提供易用的C++类库，支持外部项目集成
 - **多线程优化**：并行处理提升响应速度
 - **有序音频播放**：确保TTS按句子顺序播放
 - **自动模型管理**：首次运行自动下载所需模型
@@ -84,11 +86,10 @@ ollama pull qwen2.5       # 标准模型
 ### 3. 构建项目
 ```bash
 # 克隆项目
-git clone <repository-url>
-cd asr_llm_tts_cpp/ai
+git clone git@gitlab.dc.com:bianbu/ai/ai.git
+cd ai
 
 # 构建
-chmod +x build.sh
 ./build.sh
 ```
 
@@ -111,13 +112,59 @@ chmod +x build.sh
   --tts_speed 1.0
 ```
 
-### 🎙️ 仅语音识别
+### 🎙️ 语音识别
 ```bash
-# ASR基础功能
-./build/bin/asr_cpp --device-index 6 --vad-type silero
+# VAD+ASR (实时麦克风)
+./build/bin/vad_asr --device-index 6 --vad-type silero
 
 # ASR + LLM (无TTS)
 ./build/bin/asr_llm --model qwen2.5
+```
+
+### 🎵 音频文件处理
+```bash
+# 处理单个音频文件
+./build/bin/asr audio_file.wav
+
+# 批量处理音频文件
+./build/bin/asr file1.wav file2.wav file3.wav
+
+# 支持的音频格式：WAV, FLAC, OGG
+# 自动重采样到16kHz进行识别
+```
+
+### 🔊 文本转语音 (TTS)
+```bash
+# 基本用法
+./build/bin/tts --text "你好世界"
+
+# 保存为WAV文件
+./build/bin/tts --text "欢迎使用语音合成系统" --save_audio_path output.wav
+
+# 调整语速和说话人
+./build/bin/tts --text "这是一个测试" --tts_speed 1.2 --tts_speaker_id 0 --save_audio_path slow.wav
+
+# 查看帮助
+./build/bin/tts --help
+```
+
+#### TTS API 使用 (用于C++项目集成)
+```cpp
+#include "tts_demo.hpp"
+
+// 创建参数
+TTSDemo::Params params;
+params.tts_speed = 1.0f;
+params.tts_speaker_id = 0;
+
+// 创建TTS实例
+TTSDemo tts(params);
+
+// 初始化（自动下载模型）
+if (tts.initialize()) {
+    // 生成语音并保存
+    tts.run("你好世界", "output.wav");
+}
 ```
 
 ### 📱 查找音频设备
@@ -138,6 +185,14 @@ python search_device.py
 | `--tts_speed` | TTS语速 | 1.0 | 0.8 |
 | `--tts_speaker` | TTS说话人ID | 0 | 0 |
 
+### TTS 独立工具参数
+| 参数 | 描述 | 默认值 | 示例 |
+|------|------|--------|------|
+| `--text` | 要转换的文本 | - | "你好世界" |
+| `--save_audio_path` | 保存音频文件路径 | - | "output.wav" |
+| `--tts_speed` | TTS语速 | 1.0 | 1.2 |
+| `--tts_speaker_id` | TTS说话人ID | 0 | 0 |
+
 ### 音频录制参数
 | 参数 | 描述 | 默认值 |
 |------|------|--------|
@@ -152,8 +207,11 @@ python search_device.py
 ```
 src/
 ├── main_asr_llm_tts.cpp    # 完整对话系统主程序
+├── main_ase.cpp            # 音频文件处理引擎 (asr)
 ├── main_llm.cpp            # ASR+LLM系统
-├── main.cpp                # 纯ASR系统
+├── main_asr.cpp            # VAD+ASR实时系统 (vad_asr)
+├── main_tts.cpp            # TTS独立工具主程序
+├── tts_demo.cpp            # TTS API实现 (外部可用)
 ├── audio_recorder.cpp      # 音频录制模块
 ├── vad_detector.cpp        # 语音活动检测
 ├── asr_model.cpp           # 语音识别模型
@@ -162,6 +220,10 @@ src/
 └── tts/
     ├── tts_model.cpp           # TTS模型实现
     └── tts_model_downloader.cpp # TTS模型下载器
+
+include/
+├── tts_demo.hpp            # TTS API头文件 (外部接口)
+└── ...
 ```
 
 ### 工作流程
@@ -255,6 +317,70 @@ A:
 - 调整采样率到16kHz
 - 在高性能设备上运行
 
+## TTS API 集成指南
+
+### 在您的C++项目中使用TTS API
+
+#### 1. 复制所需文件到您的项目
+```bash
+# 复制头文件
+cp include/tts_demo.hpp your_project/include/
+
+# 复制源文件
+cp src/tts_demo.cpp your_project/src/
+cp src/tts/tts_model.cpp your_project/src/
+cp src/tts/tts_model_downloader.cpp your_project/src/
+```
+
+#### 2. 修改您的CMakeLists.txt
+```cmake
+# 添加TTS源文件
+add_executable(your_app
+    your_main.cpp
+    src/tts_demo.cpp
+    src/tts_model.cpp
+    src/tts_model_downloader.cpp
+)
+
+# 链接必需的库
+target_link_libraries(your_app 
+    onnxruntime
+    sndfile
+    curl
+    pthread
+)
+
+# 添加头文件路径
+target_include_directories(your_app PRIVATE include)
+```
+
+#### 3. 基本API使用示例
+详细示例请参考 `TTS_API_USAGE.md` 文档。
+
+```cpp
+#include "tts_demo.hpp"
+
+int main() {
+    // 配置参数
+    TTSDemo::Params params;
+    params.tts_speed = 1.0f;        // 正常语速
+    params.tts_speaker_id = 0;      // 默认说话人
+    
+    // 创建TTS实例
+    TTSDemo tts(params);
+    
+    // 初始化（首次运行会自动下载模型）
+    if (!tts.initialize()) {
+        return -1;  // 初始化失败
+    }
+    
+    // 生成语音
+    tts.run("你好，欢迎使用TTS系统！", "greeting.wav");
+    
+    return 0;
+}
+```
+
 ## 开发指南
 
 ### 添加新的TTS模型
@@ -282,7 +408,21 @@ MIT License - 详见 LICENSE 文件
 
 ## 更新日志
 
-### v2.0.0 (当前版本)
+### v2.2.0 (当前版本)
+- ✅ 新增独立TTS工具 (`tts`)，支持命令行文本转语音
+- ✅ 提供TTSDemo C++ API接口，支持外部项目集成
+- ✅ 重构TTS模块架构，分离头文件和实现
+- ✅ 输出标准WAV格式音频文件，兼容各种播放器
+- ✅ 添加详细的API使用文档和示例代码
+
+### v2.1.0
+- ✅ 重构可执行文件命名：asr (文件处理)、vad_asr (实时麦克风)
+- ✅ 新增音频文件批量处理引擎
+- ✅ 支持批量音频文件语音识别
+- ✅ 自动音频格式转换和重采样功能
+- ✅ 优化模块化架构设计
+
+### v2.0.0
 - ✅ 集成完整ASR-LLM-TTS对话系统
 - ✅ 实现流式LLM输出和实时TTS播放
 - ✅ 添加有序音频播放队列
@@ -294,38 +434,3 @@ MIT License - 详见 LICENSE 文件
 - ✅ SenseVoice语音识别
 - ✅ Ollama LLM集成
 - ✅ 多平台支持
-
-## 许可证协议
-
-### 开源许可
-本项目采用开源许可证。
-
-### 使用范围
-
-** 允许免费使用：**
-- 个人学习和研究
-- 学术研究和教育用途
-- 技术评估和测试
-- 开源项目集成
-
-** 商业使用需要许可：**
-- 集成到商业产品/服务
-- 开发商业应用程序  
-- 销售包含本软件的产品
-- 提供商业化语音识别服务
-- 营利性组织生产环境使用
-
-### 商业许可申请
-
-如需商业使用许可，请联系项目维护者（`不收费，给个star，告诉我一声就可以拿走`）：
-
-**邮箱**: [3510297507@qq.com]  
-**GitHub**: [muggle-stack]  
-
-### 重要提醒
-
-**个人开发者**: 可以自由使用，但请保留版权声明  
-**企业用户**: 建议在使用前联系我的获得正式许可  
-**开源贡献**: 欢迎提交PR和Issue，共同完善项目
-
- 如果您觉得本项目对您有帮助，希望您在 GitHub 上给本项目一个 Star。

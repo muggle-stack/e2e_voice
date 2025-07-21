@@ -3,8 +3,8 @@ import time
 import argparse # 导入 argparse 模块
 
 # 假设这些是您的模块
-from spacemit_asr import ASRModel
-from spacemit_audio import RecAudioVadThread
+from asr import ASRModel
+from audio import RecAudioVadThread
 
 def main(args):
     """

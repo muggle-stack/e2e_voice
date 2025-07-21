@@ -16,7 +16,9 @@ void OrderedAudioQueue::enqueue(const OrderedAudioData& audio) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         audio_map_[audio.order] = audio;
-        std::cout << "[OrderedQueue] Enqueued audio #" << audio.order << ": " << audio.text.substr(0, 20) << "..." << std::endl;
+        // Safely handle text substring
+        std::string preview = audio.text.length() > 20 ? audio.text.substr(0, 20) + "..." : audio.text;
+        std::cout << "[OrderedQueue] Enqueued audio #" << audio.order << ": " << preview << std::endl;
     }
     cv_.notify_one();
 }
@@ -80,10 +82,13 @@ void OrderedAudioQueue::playbackWorker() {
             
             auto it = audio_map_.find(next_play_order_);
             if (it != audio_map_.end()) {
-                audio = std::move(it->second);
+                // Make a proper copy to avoid alignment issues on RISC-V
+                audio = it->second;  // Copy instead of move
                 audio_map_.erase(it);
                 found = true;
-                std::cout << "[OrderedQueue] Playing audio #" << next_play_order_ << ": " << audio.text.substr(0, 20) << "..." << std::endl;
+                // Safely handle text substring
+                std::string preview = audio.text.length() > 20 ? audio.text.substr(0, 20) + "..." : audio.text;
+                std::cout << "[OrderedQueue] Playing audio #" << next_play_order_ << ": " << preview << std::endl;
                 next_play_order_++;
             }
         }
@@ -130,15 +135,26 @@ void OrderedAudioQueue::playAudioBlocking(const std::vector<float>& samples, int
     }
     
     // 分块写入音频数据（阻塞写入）
-    const size_t chunk_size = 1024;
+    // Use smaller chunks for RISC-V to reduce memory pressure
+    const size_t chunk_size = 512;  // Smaller chunks for RISC-V
     size_t total_written = 0;
+    
+    // Create aligned buffer for RISC-V
+    std::vector<float> chunk_buffer;
+    chunk_buffer.reserve(chunk_size);
+    
     for (size_t i = 0; i < samples.size(); i += chunk_size) {
         if (stop_flag_) {
             break;
         }
         
         size_t frames_to_write = std::min(chunk_size, samples.size() - i);
-        err = Pa_WriteStream(stream, &samples[i], frames_to_write);
+        
+        // Copy to aligned buffer
+        chunk_buffer.clear();
+        chunk_buffer.insert(chunk_buffer.end(), samples.begin() + i, samples.begin() + i + frames_to_write);
+        
+        err = Pa_WriteStream(stream, chunk_buffer.data(), frames_to_write);
         total_written += frames_to_write;
         
         if (err != paNoError && err != paOutputUnderflowed) {

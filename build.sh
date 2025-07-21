@@ -3,8 +3,8 @@
 # ASR C++ Build Script
 set -e
 
-echo "Building ASR C++ Application"
-echo "==============================="
+echo "Building SpaceMit AI Speech Recognition Applications"
+echo "=================================================="
 
 # Function to check for a command's existence
 check_command() {
@@ -103,6 +103,12 @@ fi
 check_pkg_config_package "libcurl" "curl" "libcurl4-openssl-dev"
 echo "cURL development files found."
 
+# --- Check for FFTW3 development files ---
+# macOS: fftw (Homebrew installs dev files)
+# Ubuntu: libfftw3-dev
+check_pkg_config_package "fftw3f" "fftw" "libfftw3-dev"
+echo "FFTW3 development files found."
+
 echo "All essential build dependencies checked."
 echo ""
 
@@ -127,15 +133,49 @@ make -j$MAKE_JOBS
 echo ""
 echo "Build completed successfully!"
 echo ""
-echo "To run the application:"
+echo "Built applications:"
+echo "   vad_asr     - VAD + ASR real-time speech recognition (microphone input)"
+echo "   asr         - Audio file processing engine (batch processing)"
+echo "   asr_llm     - ASR + Large Language Model integration"
+echo "   asr_fc      - ASR + Function Calling"
+echo "   tts         - Text-to-Speech synthesis tool"
+echo "   asr_llm_tts - Complete ASR + LLM + TTS conversation system"
+echo ""
+echo "To run the applications:"
 echo "   cd build"
-echo "   ./bin/asr_cpp"
+echo ""
+echo "   # Real-time speech recognition"
+echo "   ./bin/vad_asr"
+echo ""
+echo "   # Audio file processing"
+echo "   ./bin/asr audio.wav"
+echo "   ./bin/asr file1.wav file2.wav  # batch processing"
+echo ""
+echo "   # ASR with LLM integration"
+echo "   ./bin/asr_llm"
+echo ""
+echo "   # ASR with Function Calling"
+echo "   ./bin/asr_fc"
+echo ""
+echo "   # Text-to-Speech synthesis"
+echo "   ./bin/tts --text \"你好世界\" --save_audio_path output.wav"
+echo "   ./bin/tts --help"
+echo ""
+echo "   # Complete conversation system (ASR + LLM + TTS)"
+echo "   ./bin/asr_llm_tts"
+echo "   ./bin/asr_llm_tts --help"
 echo ""
 echo "Build artifacts:"
-echo "   Executable: build/bin/asr_cpp"
+echo "   Executables: build/bin/vad_asr, build/bin/asr, build/bin/asr_llm, build/bin/asr_fc, build/bin/tts, build/bin/asr_llm_tts"
 echo "   Build logs: build/"
 echo ""
 echo "Next steps:"
-echo "   1. Run './bin/asr_cpp' to start the demo"
+echo "   1. Choose the appropriate application for your use case:"
+echo "      - asr: Batch audio file processing (WAV/FLAC/OGG)"
+echo "      - vad_asr: Real-time microphone input with VAD"
+echo "      - tts: Text-to-Speech synthesis (standalone)"
+echo "      - asr_llm_tts: Complete conversation system"
 echo "   2. Models will be downloaded automatically on first run"
-echo "   3. Press Enter to start recording when prompted"
+echo "   3. For real-time apps: Press Enter to start recording when prompted"
+echo "   4. For file processing: Provide audio file path(s) as argument(s)"
+echo "   5. For TTS: Use --text parameter to specify text for synthesis"

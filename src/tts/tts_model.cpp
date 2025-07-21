@@ -11,15 +11,19 @@
 #include <unordered_set>
 #include <filesystem>
 #include <cstdint>
+#include <cstdlib>  // for posix_memalign
+#include <chrono>
+#include <cctype>   // for isalnum, ispunct
 #include <fftw3.h>
 #include <regex>
+#include <mutex>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 // Jieba for Chinese text segmentation
-#include "jieba/Jieba.hpp"
+#include "cppjieba/Jieba.hpp"
 
 namespace fs = std::filesystem;
 
@@ -27,6 +31,10 @@ namespace tts {
 
 // Internal helper functions
 namespace {
+
+// Forward declarations
+std::vector<float> normalizeAudio(const std::vector<float>& audio, const TTSConfig& config);
+std::vector<float> removeClicksAndPops(const std::vector<float>& audio);
 
 // Helper function to read custom metadata from ONNX model
 std::string LookupCustomModelMetaData(const Ort::ModelMetadata& meta_data,
@@ -97,7 +105,7 @@ std::unordered_map<std::string, std::string> readLexicon(const std::string& path
 }
 
 // Convert mel spectrogram to audio using vocoder
-std::vector<float> vocoderInference(Ort::Session& session, const std::vector<float>& mel, int mel_dim) {
+std::vector<float> vocoderInference(Ort::Session& session, const std::vector<float>& mel, int mel_dim, const TTSConfig& config) {
     // Get input/output info
     Ort::AllocatorWithDefaultOptions allocator;
     
@@ -187,13 +195,30 @@ std::vector<float> vocoderInference(Ort::Session& session, const std::vector<flo
             }
         }
         
-        // Perform inverse FFT using FFTW
-        fftwf_complex* in = fftwf_alloc_complex(n_fft / 2 + 1);
-        float* out = fftwf_alloc_real(n_fft);
-        fftwf_plan plan = fftwf_plan_dft_c2r_1d(n_fft, in, out, FFTW_ESTIMATE);
+        // Perform inverse FFT using FFTW with proper alignment
+        // Use aligned allocation for RISC-V compatibility
+        fftwf_complex* in = nullptr;
+        float* out = nullptr;
         
-        // Copy to FFTW input format
-        for (int32_t i = 0; i < n_fft_bins; ++i) {
+        // Ensure 16-byte alignment for RISC-V
+        const size_t alignment = 16;
+        size_t in_size = sizeof(fftwf_complex) * (n_fft / 2 + 1);
+        size_t out_size = sizeof(float) * n_fft;
+        
+        // Use aligned allocation
+        if (posix_memalign((void**)&in, alignment, in_size) != 0) {
+            throw std::runtime_error("Failed to allocate aligned memory for FFT input");
+        }
+        if (posix_memalign((void**)&out, alignment, out_size) != 0) {
+            free(in);
+            throw std::runtime_error("Failed to allocate aligned memory for FFT output");
+        }
+        
+        // Use FFTW_UNALIGNED flag for RISC-V to handle potential alignment issues
+        fftwf_plan plan = fftwf_plan_dft_c2r_1d(n_fft, in, out, FFTW_ESTIMATE | FFTW_UNALIGNED);
+        
+        // Copy to FFTW input format with explicit bounds checking
+        for (int32_t i = 0; i < n_fft_bins && i < (n_fft / 2 + 1); ++i) {
             in[i][0] = p_real[i];
             in[i][1] = p_imag[i];
         }
@@ -208,11 +233,11 @@ std::vector<float> vocoderInference(Ort::Session& session, const std::vector<flo
         }
         
         // Apply window
-        for (int32_t i = 0; i < win_length; ++i) {
+        for (int32_t i = 0; i < win_length && i < n_fft; ++i) {
             out[i] *= window[i];
         }
         
-        // Overlap-add
+        // Overlap-add with bounds checking
         int32_t start_pos = frame * hop_length;
         for (int32_t i = 0; i < n_fft; ++i) {
             if (start_pos + i < audio_length) {
@@ -223,8 +248,8 @@ std::vector<float> vocoderInference(Ort::Session& session, const std::vector<flo
         
         // Cleanup
         fftwf_destroy_plan(plan);
-        fftwf_free(in);
-        fftwf_free(out);
+        free(in);  // Use free() for posix_memalign allocated memory
+        free(out);
     }
     
     // Normalize by window overlap
@@ -234,20 +259,172 @@ std::vector<float> vocoderInference(Ort::Session& session, const std::vector<flo
         }
     }
     
-    // Apply volume scaling
-    float max_amplitude = 0.0f;
-    for (float sample : audio) {
-        max_amplitude = std::max(max_amplitude, std::abs(sample));
-    }
+    // Apply audio normalization and dynamic range compression
+    audio = normalizeAudio(audio, config);
     
-    if (max_amplitude > 0.0f) {
-        float scale = 0.8f / max_amplitude;  // Scale to 80% for better volume
-        for (float& sample : audio) {
-            sample *= scale;
-        }
+    // Post-process to remove clicks and pops
+    if (config.remove_clicks) {
+        audio = removeClicksAndPops(audio);
     }
     
     return audio;
+}
+
+// Calculate RMS (Root Mean Square) of audio signal
+float calculateRMS(const std::vector<float>& audio) {
+    if (audio.empty()) return 0.0f;
+    
+    float sum_squares = 0.0f;
+    for (float sample : audio) {
+        sum_squares += sample * sample;
+    }
+    return std::sqrt(sum_squares / audio.size());
+}
+
+// Apply dynamic range compression
+std::vector<float> applyCompression(const std::vector<float>& audio, float threshold, float ratio) {
+    std::vector<float> compressed = audio;
+    
+    for (float& sample : compressed) {
+        float abs_sample = std::abs(sample);
+        if (abs_sample > threshold) {
+            // Apply compression above threshold
+            float over_threshold = abs_sample - threshold;
+            float compressed_over = over_threshold / ratio;
+            float new_abs = threshold + compressed_over;
+            sample = (sample < 0) ? -new_abs : new_abs;
+        }
+    }
+    
+    return compressed;
+}
+
+// Normalize audio with RMS normalization and optional dynamic range compression
+std::vector<float> normalizeAudio(const std::vector<float>& audio, const TTSConfig& config) {
+    if (audio.empty()) return audio;
+    
+    // Use config parameters
+    const float target_rms = config.target_rms;
+    const float compression_ratio = config.compression_ratio;
+    const float compression_threshold = config.compression_threshold;
+    const bool use_rms_norm = config.use_rms_norm;
+    
+    // Create aligned copy for RISC-V safety
+    std::vector<float> processed;
+    processed.reserve(audio.size());
+    processed.assign(audio.begin(), audio.end());
+    
+    // Step 1: Apply dynamic range compression to reduce volume variations
+    processed = applyCompression(processed, compression_threshold, compression_ratio);
+    
+    // Step 2: Apply normalization
+    if (use_rms_norm) {
+        // RMS normalization for consistent perceived loudness
+        float current_rms = calculateRMS(processed);
+        if (current_rms > 0.0f) {
+            float scale = target_rms / current_rms;
+            
+            // Apply soft limiting to prevent clipping
+            const float max_scale = 3.0f;  // Limit amplification to prevent noise
+            scale = std::min(scale, max_scale);
+            
+            for (float& sample : processed) {
+                sample *= scale;
+            }
+            
+            // Soft clipping to prevent harsh distortion
+            for (float& sample : processed) {
+                if (std::abs(sample) > 0.95f) {
+                    float sign = (sample < 0) ? -1.0f : 1.0f;
+                    float abs_val = std::abs(sample);
+                    // Soft knee compression near clipping
+                    sample = sign * (0.95f + 0.05f * std::tanh((abs_val - 0.95f) * 20.0f));
+                }
+            }
+        }
+    } else {
+        // Fallback to peak normalization
+        float max_amplitude = 0.0f;
+        for (float sample : processed) {
+            max_amplitude = std::max(max_amplitude, std::abs(sample));
+        }
+        
+        if (max_amplitude > 0.0f) {
+            float scale = 0.8f / max_amplitude;
+            for (float& sample : processed) {
+                sample *= scale;
+            }
+        }
+    }
+    
+    return processed;
+}
+
+// Remove clicks and pops from audio by applying fade-in/out and DC offset removal
+std::vector<float> removeClicksAndPops(const std::vector<float>& audio) {
+    if (audio.empty()) return audio;
+    
+    // Create aligned copy for RISC-V safety
+    std::vector<float> processed;
+    processed.reserve(audio.size());
+    processed.assign(audio.begin(), audio.end());
+    
+    // Step 1: Remove DC offset (average value should be zero)
+    float dc_offset = 0.0f;
+    for (float sample : processed) {
+        dc_offset += sample;
+    }
+    dc_offset /= processed.size();
+    
+    // Only remove DC offset if it's significant (> 0.01)
+    if (std::abs(dc_offset) > 0.01f) {
+        for (float& sample : processed) {
+            sample -= dc_offset;
+        }
+    }
+    
+    // Step 2: Apply very short fade-in at the beginning (2ms at 22050Hz = ~44 samples)
+    // Only fade the very beginning to avoid clicks, not affect overall volume
+    const int fade_in_samples = std::min(44, static_cast<int>(processed.size() / 100));
+    for (int i = 0; i < fade_in_samples && i < processed.size(); ++i) {
+        float fade_factor = static_cast<float>(i) / fade_in_samples;
+        // Use cosine fade for smoother transition
+        fade_factor = 0.5f * (1.0f - std::cos(M_PI * fade_factor));
+        processed[i] *= fade_factor;
+    }
+    
+    // Step 3: Apply short fade-out at the end (5ms = ~110 samples)
+    const int fade_out_samples = std::min(110, static_cast<int>(processed.size() / 50));
+    for (int i = 0; i < fade_out_samples && i < processed.size(); ++i) {
+        int idx = processed.size() - 1 - i;
+        float fade_factor = static_cast<float>(i) / fade_out_samples;
+        // Use cosine fade for smoother transition
+        fade_factor = 0.5f * (1.0f - std::cos(M_PI * fade_factor));
+        processed[idx] *= fade_factor;
+    }
+    
+    // Step 4: Simple DC blocking filter (high-pass at 20Hz)
+    // This is more gentle than the previous implementation
+    if (processed.size() > 1) {
+        const float cutoff = 0.999f;  // Very gentle high-pass
+        float prev_input = 0.0f;
+        float prev_output = 0.0f;
+        
+        for (size_t i = 0; i < processed.size(); ++i) {
+            float current_input = processed[i];
+            float current_output = cutoff * (prev_output + current_input - prev_input);
+            processed[i] = current_output;
+            prev_input = current_input;
+            prev_output = current_output;
+        }
+    }
+    
+    // Step 5: Ensure the very last sample is zero (single sample only)
+    if (!processed.empty()) {
+        processed.back() = 0.0f;
+    }
+    
+    return processed;
 }
 
 } // anonymous namespace
@@ -263,8 +440,14 @@ public:
             env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "TTSModel");
             
             Ort::SessionOptions session_options;
-            session_options.SetIntraOpNumThreads(4);
+            session_options.SetIntraOpNumThreads(3);
             session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            
+            // RISC-V specific: Disable memory arena to avoid alignment issues
+            #if defined(__riscv) || defined(__riscv__)
+            session_options.DisableMemPattern();
+            session_options.DisableCpuMemArena();
+            #endif
             
             // Load acoustic model
             acoustic_model_ = std::make_unique<Ort::Session>(*env_, config_.acoustic_model_path.c_str(), session_options);
@@ -285,6 +468,11 @@ public:
             
             // Get model metadata
             extractModelMetadata();
+            
+            // Warm up the models to avoid slow first inference
+            if (config_.enable_warmup) {
+                warmUpModels();
+            }
             
             initialized_ = true;
             return true;
@@ -325,10 +513,16 @@ public:
         }
         
         // Run vocoder
-        std::vector<float> audio_samples = vocoderInference(*vocoder_model_, mel, mel_dim_);
+        std::vector<float> audio_samples;
+        {
+            // Lock for thread-safe ONNX Runtime inference on RISC-V
+            std::lock_guard<std::mutex> lock(inference_mutex_);
+            audio_samples = vocoderInference(*vocoder_model_, mel, mel_dim_, config_);
+        }
         
-        // Create result
+        // Create result with proper initialization
         GeneratedAudio audio;
+        audio.samples.reserve(audio_samples.size()); // Pre-allocate for RISC-V
         audio.samples = std::move(audio_samples);
         audio.sample_rate = config_.sample_rate;
         
@@ -348,13 +542,88 @@ public:
     }
     
 private:
+    void warmUpModels() {
+        std::cout << "Warming up TTS models..." << std::endl;
+        auto start_time = std::chrono::high_resolution_clock::now();
+        
+        try {
+            // Method 1: Run a complete inference with a short text
+            // This ensures all code paths are executed and optimized
+            std::string warmup_text = "测试";
+            
+            // Process the text through the full pipeline
+            std::string processed_text = preprocessText(warmup_text);
+            std::vector<int64_t> token_ids = textToTokenIds(processed_text);
+            
+            if (!token_ids.empty()) {
+                // Add blank tokens
+                std::vector<int64_t> tokens_with_blanks = addBlankTokens(token_ids);
+                
+                // Run acoustic model
+                std::vector<float> mel = runAcousticModel(tokens_with_blanks, 0, 1.0f);
+                
+                if (!mel.empty()) {
+                    // Run vocoder
+                    std::lock_guard<std::mutex> lock(inference_mutex_);
+                    std::vector<float> audio = vocoderInference(*vocoder_model_, mel, mel_dim_, config_);
+                    
+                    // The generated audio is discarded, we just want to warm up the models
+                }
+            }
+            
+            // Method 2: Additional warm-up with different sizes to cover more cases
+            // Small input
+            std::vector<int64_t> small_tokens = {1, 2, 3};
+            std::vector<int64_t> small_with_blanks = addBlankTokens(small_tokens);
+            runAcousticModel(small_with_blanks, 0, 1.0f);
+            
+            // Medium input
+            std::vector<int64_t> medium_tokens = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+            std::vector<int64_t> medium_with_blanks = addBlankTokens(medium_tokens);
+            runAcousticModel(medium_with_blanks, 0, 1.0f);
+            
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            std::cout << "TTS models warmed up successfully in " << duration.count() << "ms" << std::endl;
+            
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: TTS warm-up failed: " << e.what() << std::endl;
+            // Don't fail initialization if warm-up fails
+        }
+    }
+    
     void initializeJieba() {
         // Initialize Jieba with dictionary
-        std::string dict_path = config_.dict_dir + "/jieba.dict.utf8";
-        std::string hmm_path = config_.dict_dir + "/hmm_model.utf8";
-        std::string user_dict = config_.dict_dir + "/user.dict.utf8";
-        std::string idf_path = config_.dict_dir + "/idf.utf8";
-        std::string stop_words = config_.dict_dir + "/stop_words.utf8";
+        // Use jieba_dict_dir if specified, otherwise try to find it relative to executable
+        std::string jieba_dir = config_.jieba_dict_dir;
+        if (jieba_dir.empty()) {
+            // Try multiple possible locations
+            std::vector<std::string> possible_paths = {
+                "../third_party/cppjieba/dict",
+                "../../third_party/cppjieba/dict",
+                "../../../third_party/cppjieba/dict",
+                "third_party/cppjieba/dict",
+                "/home/rongmingjun/asr_llm_tts_cpp/ai/third_party/cppjieba/dict"
+            };
+            
+            for (const auto& path : possible_paths) {
+                if (fs::exists(path + "/jieba.dict.utf8")) {
+                    jieba_dir = path;
+                    std::cout << "Found cppjieba dictionary at: " << jieba_dir << std::endl;
+                    break;
+                }
+            }
+            
+            if (jieba_dir.empty()) {
+                throw std::runtime_error("Cannot find cppjieba dictionary. Please set jieba_dict_dir in config.");
+            }
+        }
+        
+        std::string dict_path = jieba_dir + "/jieba.dict.utf8";
+        std::string hmm_path = jieba_dir + "/hmm_model.utf8";
+        std::string user_dict = jieba_dir + "/user.dict.utf8";
+        std::string idf_path = jieba_dir + "/idf.utf8";
+        std::string stop_words = jieba_dir + "/stop_words.utf8";
         
         jieba_ = std::make_unique<cppjieba::Jieba>(
             dict_path, hmm_path, user_dict, idf_path, stop_words
@@ -477,6 +746,7 @@ private:
         return processed;
     }
     
+    
     std::string mapPhoneme(const std::string& phone) {
         // Handle common phoneme mismatches between lexicon and token vocabulary
         static std::unordered_map<std::string, std::string> phoneme_mapping = {
@@ -576,22 +846,11 @@ private:
                 }
             }
         } else {
-            // For other languages, would need espeak-ng or similar
-            // For now, just do character-based lookup
-            for (char c : text) {
-                if (c == ' ') {
-                    auto it = token_to_id_.find(" ");
-                    if (it != token_to_id_.end()) {
-                        token_ids.push_back(it->second);
-                    }
-                } else {
-                    std::string char_str(1, c);
-                    auto it = token_to_id_.find(char_str);
-                    if (it != token_to_id_.end()) {
-                        token_ids.push_back(it->second);
-                    }
-                }
+            // For non-Chinese text, skip it since this model only supports Chinese
+            if (!text.empty()) {
+                std::cerr << "Warning: This TTS model only supports Chinese. Non-Chinese text will be skipped: " << text << std::endl;
             }
+            return token_ids;
         }
         
         
@@ -601,15 +860,20 @@ private:
     bool isPunctuation(const std::string& s) {
         static const std::unordered_set<std::string> puncts = {
             ",", ".", "!", "?", ":", "\"", "'", "，",
-            "。", "！", "？", """, """, "'", "'", "；", "、"
+            "。", "！", "？", """, """, "'", "'", "；", "、",
+            "—", "–", "…", "-", "(", ")", "（", "）",
+            "[", "]", "【", "】", "{", "}", "《", "》"
         };
         return puncts.count(s);
     }
+    
+    
     
     std::vector<int64_t> convertWordToIds(const std::string& word) {
         // Convert word to lowercase for lookup (following sherpa-onnx)
         std::string lower_word = word;
         std::transform(lower_word.begin(), lower_word.end(), lower_word.begin(), ::tolower);
+        
         
         // Try direct word lookup in lexicon first
         auto lex_it = lexicon_.find(lower_word);
@@ -637,6 +901,7 @@ private:
         
         // Character-level fallback for OOV words
         std::vector<int64_t> result;
+        result.reserve(word.length() * 2); // Pre-allocate for RISC-V alignment
         std::vector<std::string> chars = splitUtf8(word);
         
         for (const auto& char_str : chars) {
@@ -645,6 +910,14 @@ private:
                 auto char_ids = convertPhonemesToIds(char_lex_it->second);
                 result.insert(result.end(), char_ids.begin(), char_ids.end());
             } else {
+                
+                // Last resort: try direct token lookup for the character
+                auto char_token_it = token_to_id_.find(char_str);
+                if (char_token_it != token_to_id_.end()) {
+                    result.push_back(char_token_it->second);
+                } else {
+                    std::cerr << "Warning: No mapping for character: '" << char_str << "'" << std::endl;
+                }
             }
         }
         
@@ -708,6 +981,12 @@ private:
         if (punct == "：") return ":";
         if (punct == "；") return ";";
         if (punct == "、") return ",";
+        // Skip quotes for now to avoid compilation issues
+        if (punct == "'") return "'";
+        if (punct == "'") return "'";
+        if (punct == "—") return "-";  // em-dash to hyphen
+        if (punct == "–") return "-";  // en-dash to hyphen
+        if (punct == "…") return "..."; // ellipsis
         
         // Try to find common pause tokens for major punctuations
         if (punct == "。" || punct == "！" || punct == "？") {
@@ -783,6 +1062,8 @@ private:
         const char* model_output_names[] = {"mel"};
         size_t num_inputs = 4;
         
+        // Lock for thread-safe ONNX Runtime inference on RISC-V
+        std::lock_guard<std::mutex> lock(inference_mutex_);
         auto output_tensors = acoustic_model_->Run(
             Ort::RunOptions{nullptr},
             model_input_names, input_tensors.data(), num_inputs,
@@ -816,6 +1097,9 @@ private:
     int mel_dim_ = 80;
     int num_speakers_ = 1;
     int64_t pad_id_ = 0;
+    
+    // Thread safety for ONNX Runtime on RISC-V
+    mutable std::mutex inference_mutex_;
     
     // ISTFT parameters from vocoder metadata
     int32_t istft_n_fft_ = 1024;

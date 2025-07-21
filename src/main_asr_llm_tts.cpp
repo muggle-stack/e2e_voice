@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <functional>
 #include <portaudio.h>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 #include "audio_recorder.hpp"
 #include "vad_detector.hpp"
@@ -39,6 +43,10 @@ public:
         // TTS params
         float tts_speed;
         int tts_speaker_id;
+        float target_rms;
+        float compression_ratio;
+        float compression_threshold;
+        bool use_rms_norm;
         
         Params() :
             sample_rate(16000),
@@ -51,11 +59,22 @@ public:
             vad_type("energy"),
             llm_model("qwen2.5:0.5b"),
             tts_speed(1.0f),
-            tts_speaker_id(0) {}
+            tts_speaker_id(0),
+            target_rms(0.15f),
+            compression_ratio(2.0f),
+            compression_threshold(0.7f),
+            use_rms_norm(true) {}
     };
 
     ASRLLMTTSDemo(const Params& params = Params()) : params_(params) {}
-    ~ASRLLMTTSDemo() = default;
+    ~ASRLLMTTSDemo() {
+        // Stop TTS worker thread
+        tts_stop_flag_ = true;
+        tts_queue_cv_.notify_all();
+        if (tts_worker_thread_.joinable()) {
+            tts_worker_thread_.join();
+        }
+    }
 
     bool initialize() {
         std::cout << "Initializing ASR-LLM-TTS Demo..." << std::endl;
@@ -147,10 +166,15 @@ public:
         tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
         tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
         tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
+        tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
         tts_config.language = "zh";
         tts_config.sample_rate = 22050;
         tts_config.noise_scale = 1.0f;
         tts_config.length_scale = params_.tts_speed;
+        tts_config.target_rms = params_.target_rms;
+        tts_config.compression_ratio = params_.compression_ratio;
+        tts_config.compression_threshold = params_.compression_threshold;
+        tts_config.use_rms_norm = params_.use_rms_norm;
         
         tts_model_ = std::make_unique<tts::TTSModel>(tts_config);
         if (!tts_model_->initialize()) {
@@ -192,6 +216,12 @@ public:
         // Initialize ordered audio queue for sequential TTS playback
         audio_queue_ = std::make_unique<OrderedAudioQueue>();
         audio_queue_->start();
+        
+        // Start TTS worker thread for RISC-V
+        #if defined(__riscv) || defined(__riscv__)
+        std::cout << "Starting TTS worker thread for RISC-V..." << std::endl;
+        tts_worker_thread_ = std::thread(&ASRLLMTTSDemo::ttsWorker, this);
+        #endif
         
         std::cout << "ASR-LLM-TTS Demo initialized successfully!" << std::endl;
         return true;
@@ -321,9 +351,17 @@ private:
                         
                         // 为每个句子分配顺序号，确保按顺序播放
                         size_t current_order = sentence_order++;
+                        
+                        // Limit concurrent threads on RISC-V to prevent overload
+                        #if defined(__riscv) || defined(__riscv__)
+                        // On RISC-V, enqueue to worker thread to avoid blocking LLM
+                        enqueueTTSTask(sentence, current_order);
+                        #else
+                        // On other platforms, use threads for parallel processing
                         std::thread([this, sentence, current_order]() {
                             generateAndEnqueueOrderedTTS(sentence, current_order);
                         }).detach();
+                        #endif
                     }
                 }
                 
@@ -339,9 +377,15 @@ private:
                         if (!sentence.empty()) {
                             processed_sentences.push_back(sentence);
                             size_t current_order = sentence_order++;
+                            
+                            #if defined(__riscv) || defined(__riscv__)
+                            // On RISC-V, enqueue to worker thread
+                            enqueueTTSTask(sentence, current_order);
+                            #else
                             std::thread([this, sentence, current_order]() {
                                 generateAndEnqueueOrderedTTS(sentence, current_order);
                             }).detach();
+                            #endif
                         }
                     }
                 }
@@ -537,6 +581,17 @@ private:
     std::unique_ptr<OrderedAudioQueue> audio_queue_;
     Params params_;
     
+    // TTS task queue for RISC-V to prevent blocking LLM streaming
+    struct TTSTask {
+        std::string sentence;
+        size_t order;
+    };
+    std::queue<TTSTask> tts_queue_;
+    std::mutex tts_queue_mutex_;
+    std::condition_variable tts_queue_cv_;
+    std::thread tts_worker_thread_;
+    std::atomic<bool> tts_stop_flag_{false};
+    
     void generateAndEnqueueOrderedTTS(const std::string& sentence, size_t order) {
         auto start_time = std::chrono::high_resolution_clock::now();
         tts::GeneratedAudio generated_audio = tts_model_->generate(sentence, params_.tts_speaker_id, params_.tts_speed);
@@ -555,6 +610,42 @@ private:
         OrderedAudioData audio_data(std::move(generated_audio.samples), generated_audio.sample_rate, sentence, order);
         audio_queue_->enqueue(audio_data);
     }
+    
+    void ttsWorker() {
+        while (!tts_stop_flag_) {
+            TTSTask task;
+            bool has_task = false;
+            
+            // Get task from queue
+            {
+                std::unique_lock<std::mutex> lock(tts_queue_mutex_);
+                tts_queue_cv_.wait(lock, [this] { 
+                    return !tts_queue_.empty() || tts_stop_flag_; 
+                });
+                
+                if (tts_stop_flag_) break;
+                
+                if (!tts_queue_.empty()) {
+                    task = tts_queue_.front();
+                    tts_queue_.pop();
+                    has_task = true;
+                }
+            }
+            
+            // Process task outside of lock
+            if (has_task) {
+                generateAndEnqueueOrderedTTS(task.sentence, task.order);
+            }
+        }
+    }
+    
+    void enqueueTTSTask(const std::string& sentence, size_t order) {
+        {
+            std::lock_guard<std::mutex> lock(tts_queue_mutex_);
+            tts_queue_.push({sentence, order});
+        }
+        tts_queue_cv_.notify_one();
+    }
 };
 
 void printUsage(const char* program_name) {
@@ -571,6 +662,9 @@ void printUsage(const char* program_name) {
     std::cout << "  --model <model_name>        LLM model name (default: qwen2.5:0.5b)" << std::endl;
     std::cout << "  --tts_speed <value>         TTS speech speed (default: 1.0, >1.0 = slower)" << std::endl;
     std::cout << "  --tts_speaker <value>       TTS speaker ID for multi-speaker models (default: 0)" << std::endl;
+    std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.1)" << std::endl;
+    std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0)" << std::endl;
+    std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
 }
 
@@ -624,6 +718,15 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--tts_speaker" && i + 1 < argc) {
             params.tts_speaker_id = std::atoi(argv[++i]);
+        }
+        else if (arg == "--target_rms" && i + 1 < argc) {
+            params.target_rms = std::atof(argv[++i]);
+        }
+        else if (arg == "--compression_ratio" && i + 1 < argc) {
+            params.compression_ratio = std::atof(argv[++i]);
+        }
+        else if (arg == "--use_peak_norm") {
+            params.use_rms_norm = false;
         }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;
