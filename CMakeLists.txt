@@ -144,6 +144,10 @@ add_executable(asr ${ASR_SOURCES})
 set(ASR_LLM_SOURCES ${COMMON_SOURCES} src/main_llm.cpp)
 add_executable(asr_llm ${ASR_LLM_SOURCES})
 
+# ASR-Correct executable (ASR with error correction)
+set(ASR_CORRECT_SOURCES ${COMMON_SOURCES} src/main_asr_correct.cpp)
+add_executable(asr_correct ${ASR_CORRECT_SOURCES})
+
 set(ASR_FC_SOURCES ${COMMON_SOURCES} src/main_fc.cpp)
 add_executable(asr_fc ${ASR_FC_SOURCES})
 
@@ -154,6 +158,10 @@ add_executable(asr_llm_tts ${ASR_LLM_TTS_SOURCES})
 # TTS executable (standalone)
 set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} src/main_tts.cpp)
 add_executable(tts ${TTS_STANDALONE_SOURCES})
+
+# Streaming ASR executable
+set(STREAMING_ASR_SOURCES ${COMMON_SOURCES} src/streaming_audio_recorder.cpp src/asr_thread_pool.cpp src/main_streaming_asr.cpp)
+add_executable(streaming_asr ${STREAMING_ASR_SOURCES})
 
 # Common libraries
 if(APPLE)
@@ -185,6 +193,9 @@ target_link_libraries(vad_asr ${COMMON_LIBRARIES})
 # Link libraries for ASR-LLM executable
 target_link_libraries(asr_llm ${COMMON_LIBRARIES})
 
+# Link libraries for ASR-Correct executable
+target_link_libraries(asr_correct ${COMMON_LIBRARIES})
+
 # Link libraries for ASR_fc executable
 target_link_libraries(asr_fc ${COMMON_LIBRARIES})
 
@@ -193,6 +204,9 @@ target_link_libraries(tts ${COMMON_LIBRARIES})
 # Link libraries for ASR-LLM-TTS executable
 target_link_libraries(asr_llm_tts ${COMMON_LIBRARIES})
 
+# Link libraries for Streaming ASR executable
+target_link_libraries(streaming_asr ${COMMON_LIBRARIES})
+
 # Add library search paths for all executables
 target_link_directories(asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
@@ -200,12 +214,16 @@ target_link_directories(vad_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(vad_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(asr_llm PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_llm PRIVATE ${SNDFILE_LIBRARY_DIRS})
+target_link_directories(asr_correct PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
+target_link_directories(asr_correct PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(asr_fc PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_fc PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
+target_link_directories(streaming_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
+target_link_directories(streaming_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
 
 # Compiler flags for all executables
 target_compile_options(asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
@@ -213,15 +231,19 @@ target_compile_options(vad_asr PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(vad_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(asr_correct PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(asr_correct PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_fc PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_fc PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(streaming_asr PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(streaming_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
 
 # Set output directory for all executables
-set_target_properties(asr vad_asr asr_llm asr_fc asr_llm_tts tts PROPERTIES
+set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts tts streaming_asr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

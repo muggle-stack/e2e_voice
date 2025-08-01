@@ -59,7 +59,6 @@ bool ASRModel::initializeSession() {
     try {
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(2);  // 增加线程数
-
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         session_options.SetExecutionMode(ExecutionMode::ORT_PARALLEL);  // 并行执行模式
         
