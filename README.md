@@ -96,6 +96,8 @@ cd ETE_Voice
 ## 使用说明
 
 ### 🎯 完整对话系统 (推荐)
+
+#### 本地LLM版本 (Ollama)
 ```bash
 # 查看帮助
 ./build/bin/asr_llm_tts --help
@@ -112,7 +114,49 @@ cd ETE_Voice
   --tts_speed 1.0
 ```
 
+#### 云端API版本 (DeepSeek/OpenAI)
+```bash
+# 使用DeepSeek API
+./build/bin/asr_llm_tts_api \
+  --api_key YOUR_DEEPSEEK_KEY \
+  --api_url https://api.deepseek.com/chat/completions \
+  --model deepseek-chat \
+  --device_index 7 \
+  --vad_type silero
+
+# 使用OpenAI API
+./build/bin/asr_llm_tts_api \
+  --api_key YOUR_OPENAI_KEY \
+  --api_url https://api.openai.com/v1/chat/completions \
+  --model gpt-3.5-turbo \
+  --max_tokens 500
+
+# 从环境变量或.env文件加载配置
+export API_KEY=YOUR_KEY
+export API_URL=https://api.deepseek.com/chat/completions
+./build/bin/asr_llm_tts_api --model deepseek-chat
+```
+
 ### 🎙️ 语音识别
+
+#### 实时流式ASR (新功能)
+```bash
+# 连续语音识别，自动分段
+./build/bin/streaming_asr \
+  --device_index 7 \
+  --max_duration 300 \
+  --silence_threshold 0.5 \
+  --num_threads 4 \
+  --vad_type silero
+
+# 使用能量VAD的流式识别
+./build/bin/streaming_asr \
+  --vad_type energy \
+  --vad_threshold 0.005 \
+  --pre_speech_buffer 0.25
+```
+
+#### 传统ASR模式
 ```bash
 # VAD+ASR (实时麦克风)
 ./build/bin/vad_asr --device-index 6 --vad-type silero
@@ -185,6 +229,24 @@ python search_device.py
 | `--tts_speed` | TTS语速 | 1.0 | 0.8 |
 | `--tts_speaker` | TTS说话人ID | 0 | 0 |
 
+### 云端API系统 (asr_llm_tts_api)
+| 参数 | 描述 | 默认值 | 示例 |
+|------|------|--------|------|
+| `--api_key` | API密钥 | - | sk-xxx |
+| `--api_url` | API端点URL | - | https://api.deepseek.com/chat/completions |
+| `--model` | 模型名称 | deepseek-chat | gpt-3.5-turbo |
+| `--max_tokens` | 最大生成令牌数 | 500 | 1000 |
+| `--env_file` | 环境配置文件路径 | .env | config.env |
+
+### 流式ASR系统 (streaming_asr)
+| 参数 | 描述 | 默认值 | 示例 |
+|------|------|--------|------|
+| `--max_duration` | 最大录音时长(秒) | 60 | 300 |
+| `--silence_threshold` | 静音分段阈值(秒) | 0.5 | 1.0 |
+| `--pre_speech_buffer` | 语音前缓冲(秒) | 0.25 | 0.5 |
+| `--num_threads` | ASR处理线程数 | 2 | 4 |
+| `--vad_threshold` | 能量VAD阈值 | 0.005 | 0.01 |
+
 ### TTS 独立工具参数
 | 参数 | 描述 | 默认值 | 示例 |
 |------|------|--------|------|
@@ -206,15 +268,20 @@ python search_device.py
 ### 核心模块
 ```
 src/
-├── main_asr_llm_tts.cpp    # 完整对话系统主程序
+├── main_asr_llm_tts.cpp    # 完整对话系统主程序 (Ollama)
+├── main_asr_llm_tts_api.cpp # 云端API对话系统 (DeepSeek/OpenAI)
+├── main_streaming_asr.cpp  # 流式ASR主程序
 ├── main_ase.cpp            # 音频文件处理引擎 (asr)
 ├── main_llm.cpp            # ASR+LLM系统
 ├── main_asr.cpp            # VAD+ASR实时系统 (vad_asr)
 ├── main_tts.cpp            # TTS独立工具主程序
 ├── tts_demo.cpp            # TTS API实现 (外部可用)
 ├── audio_recorder.cpp      # 音频录制模块
+├── streaming_audio_recorder.cpp # 流式音频录制器
+├── api_comm.cpp            # 云端API通信模块
 ├── vad_detector.cpp        # 语音活动检测
 ├── asr_model.cpp           # 语音识别模型
+├── asr_thread_pool.cpp     # ASR多线程处理池
 ├── text_buffer.cpp         # 流式文本缓冲
 ├── ordered_audio_queue.cpp # 有序音频播放队列
 └── tts/
@@ -223,6 +290,9 @@ src/
 
 include/
 ├── tts_demo.hpp            # TTS API头文件 (外部接口)
+├── streaming_audio_recorder.hpp # 流式录制器接口
+├── api_comm.hpp            # API通信接口
+├── asr_thread_pool.hpp     # ASR线程池接口
 └── ...
 ```
 
@@ -438,7 +508,14 @@ int main() {
 
 ## 更新日志
 
-### v2.2.0 (当前版本)
+### v2.3.0 (当前版本)
+- ✅ 新增流式ASR功能 (`streaming_asr`)，支持实时连续语音识别
+- ✅ 新增云端LLM API接口 (`asr_llm_tts_api`)，支持DeepSeek、OpenAI等多种API
+- ✅ 实现环形缓冲区和滑动窗口VAD，提升实时性能
+- ✅ 支持多线程ASR处理池，并行处理音频片段
+- ✅ 添加API通用接口层，统一支持多种LLM服务商
+
+### v2.2.0
 - ✅ 新增独立TTS工具 (`tts`)，支持命令行文本转语音
 - ✅ 提供TTSDemo C++ API接口，支持外部项目集成
 - ✅ 重构TTS模块架构，分离头文件和实现
