@@ -151,18 +151,32 @@ private:
         std::cout << "Recording completed (" << recording_duration << "s, " 
                   << audio.size() << " samples at " << recorder_params_.sample_rate << "Hz)" << std::endl;
         
+        // Convert stereo to mono if necessary
+        std::vector<float> mono_audio;
+        if (recorder_params_.channels == 2) {
+            mono_audio.reserve(audio.size() / 2);
+            for (size_t i = 0; i < audio.size(); i += 2) {
+                // Average left and right channels
+                float left = audio[i];
+                float right = audio[i + 1];
+                mono_audio.push_back((left + right) / 2.0f);
+            }
+        } else {
+            mono_audio = audio;
+        }
+        
         // Resample if necessary
         std::vector<float> resampled_audio;
         if (recorder_params_.sample_rate != 16000) {
             std::cout << "Resampling from " << recorder_params_.sample_rate << "Hz to 16000Hz..." << std::endl;
             auto resample_start = std::chrono::high_resolution_clock::now();
-            resampled_audio = resampleAudio(audio, recorder_params_.sample_rate, 16000);
+            resampled_audio = resampleAudio(mono_audio, recorder_params_.sample_rate, 16000);
             auto resample_end = std::chrono::high_resolution_clock::now();
             auto resample_time = std::chrono::duration<double>(resample_end - resample_start).count();
             std::cout << "Resampled to " << resampled_audio.size() << " samples in " 
                       << resample_time << "s" << std::endl;
         } else {
-            resampled_audio = audio;
+            resampled_audio = mono_audio;
         }
         
         // Recognize speech

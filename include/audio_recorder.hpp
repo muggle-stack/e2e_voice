@@ -93,4 +93,9 @@ private:
     
     // VAD buffer for Silero VAD (moved from static variable)
     std::vector<float> vad_buffer_;
+    
+    // VAD smoothing (for energy-based VAD): require N consecutive frames to switch state
+    int vad_speech_count_ = 0;
+    int vad_silence_count_ = 0;
+    int vad_required_consecutive_frames_ = 3;
 };

@@ -280,21 +280,35 @@ private:
         std::cout << "Recording completed (" << recording_duration << "s, " 
                   << audio.size() << " samples at " << params_.sample_rate << "Hz)" << std::endl;
         
-        // 2. Resample if necessary
+        // 2. Convert stereo to mono if necessary
+        std::vector<float> mono_audio;
+        if (params_.channels == 2) {
+            mono_audio.reserve(audio.size() / 2);
+            for (size_t i = 0; i < audio.size(); i += 2) {
+                // Average left and right channels
+                float left = audio[i];
+                float right = audio[i + 1];
+                mono_audio.push_back((left + right) / 2.0f);
+            }
+        } else {
+            mono_audio = audio;
+        }
+        
+        // 3. Resample if necessary
         std::vector<float> resampled_audio;
         if (params_.sample_rate != 16000) {
             std::cout << "Resampling from " << params_.sample_rate << "Hz to 16000Hz..." << std::endl;
             auto resample_start = std::chrono::high_resolution_clock::now();
-            resampled_audio = resampleAudio(audio, params_.sample_rate, 16000);
+            resampled_audio = resampleAudio(mono_audio, params_.sample_rate, 16000);
             auto resample_end = std::chrono::high_resolution_clock::now();
             auto resample_time = std::chrono::duration<double>(resample_end - resample_start).count();
             std::cout << "Resampled to " << resampled_audio.size() << " samples in " 
                       << resample_time << "s" << std::endl;
         } else {
-            resampled_audio = audio;
+            resampled_audio = mono_audio;
         }
         
-        // 3. Recognize speech
+        // 4. Recognize speech
         std::cout << "\n=== ASR Phase ===" << std::endl;
         std::cout << "Processing audio for speech recognition..." << std::endl;
         
