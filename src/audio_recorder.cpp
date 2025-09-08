@@ -194,38 +194,92 @@ void AudioRecorder::processAudioFrame(const float* input, unsigned long frame_co
         max_raw_amplitude = std::max(max_raw_amplitude, std::abs(frame[i]));
     }
     
-    // Adaptive amplification based on signal level (applied to both VAD and ASR)
-    float vad_amplification = 20.0f;  // Base amplification
-    if (max_raw_amplitude < 0.001f) {
-        vad_amplification = 50.0f;  // Very weak signal, amplify more
+    // Separated processing: Create dedicated high amplification audio for VAD, AFE uses original audio
+    // VAD amplification strategy: More aggressive, specifically for far-field detection
+    float vad_amplification = 100.0f;  // Base amplification significantly increased
+    if (max_raw_amplitude < 0.0001f) {
+        vad_amplification = 300.0f;  // Extremely weak signal, super high amplification
+    } else if (max_raw_amplitude < 0.001f) {
+        vad_amplification = 200.0f;  // Very weak signal, high amplification
     } else if (max_raw_amplitude < 0.01f) {
-        vad_amplification = 30.0f;  // Weak signal
+        vad_amplification = 150.0f;  // Weak signal, medium amplification
     } else if (max_raw_amplitude < 0.1f) {
-        vad_amplification = 20.0f;  // Normal signal
+        vad_amplification = 100.0f;  // Normal signal
     } else {
-        vad_amplification = 10.0f;  // Strong signal, less amplification needed
+        vad_amplification = 50.0f;   // Strong signal, moderate amplification
     }
     
-    // Apply amplification to the frame
+    // Create dedicated amplified audio for VAD (allow distortion, only for detection)
+    std::vector<float> vad_amplified_frame = frame;
+    for (auto& sample : vad_amplified_frame) {
+        sample *= vad_amplification;
+        sample = std::max(-1.0f, std::min(1.0f, sample));  // Hard clipping, allow distortion
+    }
+    
+    // Create moderately amplified audio for recording (maintain quality)
+    float recording_amplification = 20.0f;  // Moderate amplification for recording
+    if (max_raw_amplitude < 0.001f) {
+        recording_amplification = 40.0f;
+    } else if (max_raw_amplitude < 0.01f) {
+        recording_amplification = 30.0f;
+    } else if (max_raw_amplitude < 0.1f) {
+        recording_amplification = 20.0f;
+    } else {
+        recording_amplification = 15.0f;
+    }
+    
     std::vector<float> amplified_frame = frame;
     for (auto& sample : amplified_frame) {
-        sample *= vad_amplification;
-        sample = std::max(-1.0f, std::min(1.0f, sample));  // Clip to prevent overflow
+        sample *= recording_amplification;
+        sample = std::max(-1.0f, std::min(1.0f, sample));  // Gentle clipping
     }
     
-    // For VAD, use amplified audio converted to mono if stereo
+    // VAD dedicated audio processing: Force use of highly amplified audio, ignore AFE complex logic
     std::vector<float> vad_source_mono;
+    
+    // Simplified logic: VAD always uses current frame's highly amplified audio for maximum sensitivity
     vad_source_mono.reserve(frame_count);
-    if (config_.channels == 2) {
-        // Average stereo to mono (already amplified)
-        for (unsigned long i = 0; i < frame_count; ++i) {
-            float left = amplified_frame[i * 2];
-            float right = amplified_frame[i * 2 + 1];
-            vad_source_mono.push_back((left + right) / 2.0f);
-        }
+    
+    // Safety check: ensure vad_amplified_frame has enough data
+    size_t expected_size = frame_count * config_.channels;
+    if (vad_amplified_frame.size() != expected_size) {
+        std::cerr << "[VAD] Error: vad_amplified_frame size mismatch. Expected: " 
+                  << expected_size << ", Got: " << vad_amplified_frame.size() << std::endl;
+        // Can't return directly! Continue processing, but skip VAD processing
+        vad_source_mono.clear(); // Clear VAD data, but continue other processing
     } else {
-        // Already mono (and amplified)
-        vad_source_mono.assign(amplified_frame.begin(), amplified_frame.end());
+        if (config_.channels == 2) {
+            // Average stereo to mono (using VAD dedicated highly amplified version)
+            // Safer boundary checking: ensure no out-of-range memory access
+            size_t max_frames = vad_amplified_frame.size() / 2;  // Maximum processable frames
+            size_t actual_frames = std::min(static_cast<size_t>(frame_count), max_frames);
+            
+            vad_source_mono.reserve(actual_frames);
+            for (size_t i = 0; i < actual_frames; ++i) {
+                size_t left_idx = i * 2;
+                size_t right_idx = i * 2 + 1;
+                // Double protection: check both calculation result and actual size
+                if (right_idx < vad_amplified_frame.size()) {
+                    float left = vad_amplified_frame[left_idx];
+                    float right = vad_amplified_frame[right_idx];
+                    vad_source_mono.push_back((left + right) / 2.0f);
+                } else {
+                    break;  // Stop immediately if boundary issues encountered
+                }
+            }
+        } else {
+            // Already mono (using VAD dedicated highly amplified version)
+            // Ensure mono data size is correct
+            if (vad_amplified_frame.size() == frame_count) {
+                vad_source_mono.assign(vad_amplified_frame.begin(), vad_amplified_frame.end());
+            } else {
+                std::cerr << "[VAD] Warning: mono frame size mismatch, expected: " << frame_count 
+                          << ", got: " << vad_amplified_frame.size() << std::endl;
+                // Safe copy: only copy available data
+                size_t safe_size = std::min(static_cast<size_t>(frame_count), vad_amplified_frame.size());
+                vad_source_mono.assign(vad_amplified_frame.begin(), vad_amplified_frame.begin() + safe_size);
+            }
+        }
     }
     
     // Lock only when modifying shared buffers
@@ -450,8 +504,28 @@ float AudioRecorder::computeSileroVAD(const std::vector<float>& audio_chunk) {
     if (effective_rate == 16000) {
         resampled_chunk = audio_chunk;
     } else {
-        // Use the high-quality resampleMono function with linear interpolation
-        resampled_chunk = resampleMono(audio_chunk, effective_rate, 16000);
+        // Use dual-channel resampling if we have stereo input, otherwise mono
+        if (config_.channels == 1) {
+            resampled_chunk = resampleMono(audio_chunk, effective_rate, 16000);
+        } else {
+            // For stereo input, use proper dual-channel resampling
+            resampled_chunk = resampleInterleaved(audio_chunk, config_.channels, effective_rate, 16000);
+        }
+    }
+    
+    // Convert stereo to mono for VAD (Silero VAD expects mono input)
+    if (config_.channels == 2 && resampled_chunk.size() >= 2) {
+        std::vector<float> mono_chunk;
+        mono_chunk.reserve(resampled_chunk.size() / 2);
+        
+        // Average left and right channels
+        for (size_t i = 0; i + 1 < resampled_chunk.size(); i += 2) {
+            float left = resampled_chunk[i];
+            float right = resampled_chunk[i + 1];
+            mono_chunk.push_back((left + right) / 2.0f);
+        }
+        
+        resampled_chunk = std::move(mono_chunk);
     }
     
     // Add resampled chunk to buffer

@@ -1,6 +1,6 @@
 # End_to_End C++ 智能语音对话系统
 
-一个完整的中文智能语音对话系统，集成了自动语音识别(ASR)、大语言模型(LLM)和文本转语音(TTS)功能，支持实时语音交互。
+一个完整的中文智能语音对话系统，集成了自动语音识别(ASR)、大语言模型(LLM)和文本转语音(TTS)功能。支持实时语音交互，具备远场录音增强和双声道采样处理能力，适用于会议室、教室等大空间环境。
 
 ## 🎯 项目特性
 
@@ -24,6 +24,8 @@
 - **多设备支持**：支持各种音频输入设备
 - **自动重采样**：支持多种采样率自动转换
 - **实时音频队列**：保证音频播放的连续性和顺序性
+- **远场录音支持**：VAD buffer放大100倍，显著提升远场语音检测能力
+- **双声道采样**：支持立体声输入，智能通道混合优化音频质量
 
 ## 系统要求
 
@@ -109,9 +111,17 @@ cd ETE_Voice
 ./build/bin/asr_llm_tts \
   --device_index 7 \
   --sample_rate 48000 \
+  --channels 2 \
   --vad_type silero \
   --model qwen2.5:0.5b \
   --tts_speed 1.0
+
+# 远场录音优化配置
+./build/bin/asr_llm_tts \
+  --channels 2 \
+  --sample_rate 16000 \
+  --vad_type energy \
+  --trigger_threshold 0.6
 ```
 
 #### 云端API版本 (DeepSeek/OpenAI)
@@ -122,6 +132,7 @@ cd ETE_Voice
   --api_url https://api.deepseek.com/chat/completions \
   --model deepseek-chat \
   --device_index 7 \
+  --channels 2 \
   --vad_type silero
 
 # 使用OpenAI API
@@ -144,6 +155,7 @@ export API_URL=https://api.deepseek.com/chat/completions
 # 连续语音识别，自动分段
 ./build/bin/streaming_asr \
   --device_index 7 \
+  --channels 2 \
   --max_duration 300 \
   --silence_threshold 0.5 \
   --num_threads 4 \
@@ -224,6 +236,7 @@ python search_device.py
 |------|------|--------|------|
 | `--sample_rate` | 音频采样率 | 16000 | 48000 |
 | `--device_index` | 音频设备索引 | 6 | 7 |
+| `--channels` | 音频通道数 (1=单声道, 2=双声道) | 1 | 2 |
 | `--vad_type` | VAD类型 | energy | silero |
 | `--model` | LLM模型名称 | qwen2.5:0.5b | qwen2.5 |
 | `--tts_speed` | TTS语速 | 1.0 | 0.8 |
@@ -236,6 +249,7 @@ python search_device.py
 | `--api_url` | API端点URL | - | https://api.deepseek.com/chat/completions |
 | `--model` | 模型名称 | deepseek-chat | gpt-3.5-turbo |
 | `--max_tokens` | 最大生成令牌数 | 500 | 1000 |
+| `--channels` | 音频通道数 (1=单声道, 2=双声道) | 1 | 2 |
 | `--env_file` | 环境配置文件路径 | .env | config.env |
 
 ### 流式ASR系统 (streaming_asr)
@@ -245,6 +259,7 @@ python search_device.py
 | `--silence_threshold` | 静音分段阈值(秒) | 0.5 | 1.0 |
 | `--pre_speech_buffer` | 语音前缓冲(秒) | 0.25 | 0.5 |
 | `--num_threads` | ASR处理线程数 | 2 | 4 |
+| `--channels` | 音频通道数 (1=单声道, 2=双声道) | 1 | 2 |
 | `--vad_threshold` | 能量VAD阈值 | 0.005 | 0.01 |
 
 ### TTS 独立工具参数
@@ -341,6 +356,18 @@ include/
 - **音素映射**：完整的拼音到音素转换
 - **ISTFT后处理**：频域到时域的高质量音频重建
 
+### 🎙️ 远场录音增强
+- **VAD Buffer 100倍放大**：显著提升远场语音检测能力
+- **自适应放大算法**：根据信号强度动态调整放大倍数 (50x-300x)
+- **双重保护机制**：防止内存越界和数据丢失
+- **环形缓冲优化**：高效处理长时间录音数据
+
+### 📡 双声道采样处理
+- **智能通道混合**：左右声道平均融合，优化音频质量
+- **立体声兼容性**：自动检测并处理单声道/双声道输入
+- **安全边界检查**：多层保护防止数组越界访问
+- **实时性能优化**：最小化处理延迟，保持实时性
+
 ## 常见问题
 
 ### 1. 音频相关
@@ -352,6 +379,25 @@ python search_device.py
 
 **Q: 录音无声音？**
 A: 检查麦克风权限、设备索引、采样率设置
+
+**Q: 如何启用远场录音功能？**
+A: 远场录音已自动启用，通过VAD buffer 100倍放大算法提升检测灵敏度。适用于会议室、教室等大空间环境。
+
+**Q: 双声道录音有什么优势？**
+A: 双声道录音可以：
+- 提供更好的噪声抑制效果
+- 提升远场语音检测准确性
+- 改善整体音频质量
+- 自动混合左右声道优化输出
+
+**Q: 如何切换单声道/双声道？**
+```bash
+# 使用双声道
+./build/bin/asr_llm_tts --channels 2 --device_index 7
+
+# 使用单声道（默认）
+./build/bin/asr_llm_tts --channels 1 --device_index 7
+```
 
 ### 2. LLM相关
 **Q: LLM连接失败？**
@@ -508,7 +554,14 @@ int main() {
 
 ## 更新日志
 
-### v2.3.0 (当前版本)
+### v2.4.0 (当前版本)
+- ✅ **远场录音增强**：VAD buffer放大100倍，支持超远距离语音检测
+- ✅ **双声道采样处理**：智能左右声道混合，显著提升音频质量
+- ✅ **自适应放大算法**：根据信号强度动态调整放大倍数 (50x-300x)
+- ✅ **安全边界检查**：多层保护防止内存越界和数据丢失
+- ✅ **环形缓冲优化**：高效处理长时间录音数据，优化内存使用
+
+### v2.3.0
 - ✅ 新增流式ASR功能 (`streaming_asr`)，支持实时连续语音识别
 - ✅ 新增云端LLM API接口 (`asr_llm_tts_api`)，支持DeepSeek、OpenAI等多种API
 - ✅ 实现环形缓冲区和滑动窗口VAD，提升实时性能
