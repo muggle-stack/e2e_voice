@@ -8,19 +8,34 @@ TTSDemo::TTSDemo(const Params& params) : params_(params) {}
 
 bool TTSDemo::initialize(){
     tts::TTSModelDownloader tts_downloader;
-    if (!tts_downloader.ensureModelsExist()) {
+    if (!tts_downloader.ensureModelsExist("zh")) {
         std::cerr << "Failed to ensure TTS models exist" << std::endl;
         return false;
     }
     
     tts::TTSConfig tts_config;
-    tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
-    tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
-    tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
-    tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
-    tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
-    tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
-    tts_config.language = "zh";
+    
+    if (params_.tts_type == "en") {
+        // English configuration
+        tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_MODEL);
+        tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+        tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_TOKENS);
+        tts_config.data_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_DATA_DIR);
+        tts_config.language = "en";
+        // No lexicon needed for English (uses espeak-ng)
+        tts_config.lexicon_path = "";
+        tts_config.dict_dir = "";
+        tts_config.jieba_dict_dir = "";
+    } else {
+        // Chinese configuration (default)
+        tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
+        tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+        tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
+        tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
+        tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
+        tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
+        tts_config.language = "zh";
+    }
     tts_config.sample_rate = 22050;
     tts_config.noise_scale = 1.0f;
     tts_config.length_scale = params_.tts_speed;

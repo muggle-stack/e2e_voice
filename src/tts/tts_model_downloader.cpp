@@ -20,30 +20,55 @@ TTSModelDownloader::TTSModelDownloader() {
 }
 
 bool TTSModelDownloader::ensureModelsExist() {
+    // Legacy method - defaults to Chinese
+    return ensureModelsExist("zh");
+}
+
+bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
     if (!ensureCacheDir()) {
         return false;
     }
     
-    // 检查关键文件是否存在
-    std::string model_path = getModelPath(MATCHA_ZH_MODEL);
+    // First ensure vocoder exists (shared between languages)
     std::string vocoder_path = getModelPath(VOCOS_VOCODER);
-    std::string lexicon_path = getModelPath(MATCHA_ZH_LEXICON);
-    std::string tokens_path = getModelPath(MATCHA_ZH_TOKENS);
-    std::string dict_path = getModelPath(MATCHA_ZH_DICT_DIR);
-    
-    // 如果任何一个关键文件不存在，就下载整个tar.gz包
-    if (!fs::exists(model_path) || !fs::exists(vocoder_path) || 
-        !fs::exists(lexicon_path) || !fs::exists(tokens_path) || 
-        !fs::exists(dict_path)) {
-        
-        std::cout << "TTS models not found, downloading matcha-tts.tar.gz..." << std::endl;
-        if (!downloadAndExtractTarGz()) {
-            std::cerr << "Failed to download TTS models" << std::endl;
+    if (!fs::exists(vocoder_path)) {
+        if (!downloadVocoder()) {
+            std::cerr << "Failed to download vocoder" << std::endl;
             return false;
         }
     }
     
-    std::cout << "All TTS models are ready!" << std::endl;
+    // Check language-specific models
+    if (language == "zh") {
+        std::string model_path = getModelPath(MATCHA_ZH_MODEL);
+        std::string lexicon_path = getModelPath(MATCHA_ZH_LEXICON);
+        std::string tokens_path = getModelPath(MATCHA_ZH_TOKENS);
+        std::string dict_path = getModelPath(MATCHA_ZH_DICT_DIR);
+        
+        if (!fs::exists(model_path) || !fs::exists(lexicon_path) || 
+            !fs::exists(tokens_path) || !fs::exists(dict_path)) {
+            if (!downloadLanguageModel("zh")) {
+                std::cerr << "Failed to download Chinese TTS models" << std::endl;
+                return false;
+            }
+        }
+    } else if (language == "en") {
+        std::string model_path = getModelPath(MATCHA_EN_MODEL);
+        std::string tokens_path = getModelPath(MATCHA_EN_TOKENS);
+        std::string data_dir = getModelPath(MATCHA_EN_DATA_DIR);
+        
+        if (!fs::exists(model_path) || !fs::exists(tokens_path) || !fs::exists(data_dir)) {
+            if (!downloadLanguageModel("en")) {
+                std::cerr << "Failed to download English TTS models" << std::endl;
+                return false;
+            }
+        }
+    } else {
+        std::cerr << "Unsupported language: " << language << std::endl;
+        return false;
+    }
+    
+    std::cout << "All TTS models for " << language << " are ready!" << std::endl;
     return true;
 }
 
@@ -56,33 +81,8 @@ bool TTSModelDownloader::modelExists(const std::string& filename) const {
     return fs::exists(path) && fs::is_regular_file(path);
 }
 
-bool TTSModelDownloader::downloadAndExtractTarGz() {
-    std::string url = "http://archive.spacemit.com/spacemit-ai/openwebui/matcha-tts.tar.gz";
-    std::string archive_name = "matcha-tts.tar.gz";
-    std::string archive_path = cache_dir_ + archive_name;
-    
-    // Download the tar.gz file
-    std::cout << "Downloading TTS models from " << url << "..." << std::endl;
-    if (!downloadFile(url, archive_path)) {
-        std::cerr << "Failed to download TTS models archive" << std::endl;
-        return false;
-    }
-    
-    // Extract the archive with --strip-components=1 to remove the top-level directory
-    std::cout << "Extracting TTS models..." << std::endl;
-    std::string command = "tar -xzf \"" + archive_path + "\" -C \"" + cache_dir_ + "\" --strip-components=1";
-    int result = std::system(command.c_str());
-    
-    if (result != 0) {
-        std::cerr << "Failed to extract TTS models archive" << std::endl;
-        fs::remove(archive_path);
-        return false;
-    }
-    
-    // Clean up archive
-    fs::remove(archive_path);
-    std::cout << "TTS models downloaded and extracted successfully!" << std::endl;
-    return true;
+bool TTSModelDownloader::downloadAndExtractLanguageModels(const std::string& language) {
+    return downloadLanguageModel(language);
 }
 
 std::string TTSModelDownloader::getDownloadUrl(const std::string& filename) const {
@@ -178,6 +178,63 @@ bool TTSModelDownloader::extractTarGz(const std::string& archive_path, const std
     }
     
     return true;
+}
+
+bool TTSModelDownloader::downloadVocoder() {
+    std::string url = "https://archive.spacemit.com/spacemit-ai/openwebui/vocos-22khz-univ.onnx";
+    std::string dest_path = getModelPath(VOCOS_VOCODER);
+    
+    std::cout << "Downloading vocoder from " << url << "..." << std::endl;
+    if (!downloadFile(url, dest_path)) {
+        std::cerr << "Failed to download vocoder" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Vocoder downloaded successfully!" << std::endl;
+    return true;
+}
+
+bool TTSModelDownloader::downloadLanguageModel(const std::string& language) {
+    std::string url = getLanguageModelUrl(language);
+    if (url.empty()) {
+        std::cerr << "No URL available for language: " << language << std::endl;
+        return false;
+    }
+    
+    std::string archive_name = std::string("matcha-icefall-") + 
+        (language == "zh" ? "zh-baker" : "en_US-ljspeech") + ".tar.gz";
+    std::string archive_path = cache_dir_ + archive_name;
+    
+    std::cout << "Downloading " << language << " TTS models from " << url << "..." << std::endl;
+    if (!downloadFile(url, archive_path)) {
+        std::cerr << "Failed to download " << language << " TTS models archive" << std::endl;
+        return false;
+    }
+    
+    // Extract without stripping components to preserve directory structure
+    std::cout << "Extracting " << language << " TTS models..." << std::endl;
+    std::string command = "tar -xzf \"" + archive_path + "\" -C \"" + cache_dir_ + "\"";
+    int result = std::system(command.c_str());
+    
+    if (result != 0) {
+        std::cerr << "Failed to extract " << language << " TTS models archive" << std::endl;
+        fs::remove(archive_path);
+        return false;
+    }
+    
+    // Clean up archive
+    fs::remove(archive_path);
+    std::cout << language << " TTS models downloaded and extracted successfully!" << std::endl;
+    return true;
+}
+
+std::string TTSModelDownloader::getLanguageModelUrl(const std::string& language) const {
+    if (language == "zh") {
+        return "https://archive.spacemit.com/spacemit-ai/openwebui/matcha-icefall-zh-baker.tar.gz";
+    } else if (language == "en") {
+        return "https://archive.spacemit.com/spacemit-ai/openwebui/matcha-icefall-en_US-ljspeech.tar.gz";
+    }
+    return "";
 }
 
 } // namespace tts

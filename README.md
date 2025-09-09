@@ -8,7 +8,7 @@
 - **ASR (语音识别)**：基于SenseVoice模型的中文语音识别
 - **音频文件处理**：专用于音频文件批量处理的轻量级引擎
 - **LLM (大语言模型)**：集成Ollama支持多种开源模型
-- **TTS (文本转语音)**：基于Matcha-TTS的高质量语音合成
+- **TTS (文本转语音)**：基于Matcha-TTS的高质量语音合成，**支持中文和英文**
 - **流式处理**：LLM流式输出+实时TTS播放，自然对话体验
 
 ### 🛠️ 技术特性
@@ -17,7 +17,7 @@
 - **TTS API接口**：提供易用的C++类库，支持外部项目集成
 - **多线程优化**：并行处理提升响应速度
 - **有序音频播放**：确保TTS按句子顺序播放
-- **自动模型管理**：首次运行自动下载所需模型
+- **自动模型管理**：首次运行自动下载所需模型，支持语言特定模型下载
 
 ### 🎙️ 音频处理
 - **多种VAD算法**：支持能量VAD和Silero VAD
@@ -114,7 +114,8 @@ cd ETE_Voice
   --channels 2 \
   --vad_type silero \
   --model qwen2.5:0.5b \
-  --tts_speed 1.0
+  --tts_speed 1.0 \
+  --tts_type zh
 
 # 远场录音优化配置
 ./build/bin/asr_llm_tts \
@@ -133,14 +134,16 @@ cd ETE_Voice
   --model deepseek-chat \
   --device_index 7 \
   --channels 2 \
-  --vad_type silero
+  --vad_type silero \
+  --tts_type zh
 
 # 使用OpenAI API
 ./build/bin/asr_llm_tts_api \
   --api_key YOUR_OPENAI_KEY \
   --api_url https://api.openai.com/v1/chat/completions \
   --model gpt-3.5-turbo \
-  --max_tokens 500
+  --max_tokens 500 \
+  --tts_type en
 
 # 从环境变量或.env文件加载配置
 export API_KEY=YOUR_KEY
@@ -191,14 +194,20 @@ export API_URL=https://api.deepseek.com/chat/completions
 
 ### 🔊 文本转语音 (TTS)
 ```bash
-# 基本用法
-./build/bin/tts --text "你好世界"
+# 中文TTS基本用法
+./build/bin/tts --text "你好世界" --tts_type zh
+
+# 英文TTS基本用法
+./build/bin/tts --text "Hello, World!" --tts_type en
 
 # 保存为WAV文件
-./build/bin/tts --text "欢迎使用语音合成系统" --save_audio_path output.wav
+./build/bin/tts --text "欢迎使用语音合成系统" --tts_type zh --save_audio_path output.wav
+
+# 英文语音合成
+./build/bin/tts --text "Welcome to the TTS system" --tts_type en --save_audio_path english_output.wav
 
 # 调整语速和说话人
-./build/bin/tts --text "这是一个测试" --tts_speed 1.2 --tts_speaker_id 0 --save_audio_path slow.wav
+./build/bin/tts --text "这是一个测试" --tts_type zh --tts_speed 1.2 --tts_speaker_id 0 --save_audio_path slow.wav
 
 # 查看帮助
 ./build/bin/tts --help
@@ -208,18 +217,28 @@ export API_URL=https://api.deepseek.com/chat/completions
 ```cpp
 #include "tts_demo.hpp"
 
-// 创建参数
-TTSDemo::Params params;
-params.tts_speed = 1.0f;
-params.tts_speaker_id = 0;
+// 中文TTS配置
+TTSDemo::Params zh_params;
+zh_params.tts_speed = 1.0f;
+zh_params.tts_speaker_id = 0;
+zh_params.tts_type = "zh";
 
-// 创建TTS实例
-TTSDemo tts(params);
+// 英文TTS配置  
+TTSDemo::Params en_params;
+en_params.tts_speed = 1.0f;
+en_params.tts_speaker_id = 0;
+en_params.tts_type = "en";
 
-// 初始化（自动下载模型）
-if (tts.initialize()) {
-    // 生成语音并保存
-    tts.run("你好世界", "output.wav");
+// 创建中文TTS实例
+TTSDemo zh_tts(zh_params);
+if (zh_tts.initialize()) {
+    zh_tts.run("你好世界", "chinese_output.wav");
+}
+
+// 创建英文TTS实例
+TTSDemo en_tts(en_params);
+if (en_tts.initialize()) {
+    en_tts.run("Hello World", "english_output.wav");
 }
 ```
 
@@ -241,6 +260,7 @@ python search_device.py
 | `--model` | LLM模型名称 | qwen2.5:0.5b | qwen2.5 |
 | `--tts_speed` | TTS语速 | 1.0 | 0.8 |
 | `--tts_speaker` | TTS说话人ID | 0 | 0 |
+| `--tts_type` | TTS语言类型 | zh | en |
 
 ### 云端API系统 (asr_llm_tts_api)
 | 参数 | 描述 | 默认值 | 示例 |
@@ -250,6 +270,7 @@ python search_device.py
 | `--model` | 模型名称 | deepseek-chat | gpt-3.5-turbo |
 | `--max_tokens` | 最大生成令牌数 | 500 | 1000 |
 | `--channels` | 音频通道数 (1=单声道, 2=双声道) | 1 | 2 |
+| `--tts_type` | TTS语言类型 | zh | en |
 | `--env_file` | 环境配置文件路径 | .env | config.env |
 
 ### 流式ASR系统 (streaming_asr)
@@ -269,6 +290,7 @@ python search_device.py
 | `--save_audio_path` | 保存音频文件路径 | - | "output.wav" |
 | `--tts_speed` | TTS语速 | 1.0 | 1.2 |
 | `--tts_speaker_id` | TTS说话人ID | 0 | 0 |
+| `--tts_type` | TTS语言类型 | zh | en |
 
 ### 音频录制参数
 | 参数 | 描述 | 默认值 |
@@ -333,11 +355,17 @@ include/
 
 ### TTS模型 (Matcha)
 - **模型路径**：`~/.cache/matcha-tts/`
-- **主要文件**：
-  - `matcha-icefall-zh-baker/model-steps-3.onnx` - 声学模型
-  - `vocos-22khz-univ.onnx` - 声码器模型
-  - `lexicon.txt` - 发音词典
-  - `tokens.txt` - 音素标记
+- **中文TTS模型**：`matcha-icefall-zh-baker/`
+  - `model-steps-3.onnx` - 中文声学模型
+  - `lexicon.txt` - 中文发音词典
+  - `tokens.txt` - 中文音素标记
+  - `dict/` - 中文词典目录
+- **英文TTS模型**：`matcha-icefall-en_US-ljspeech/`
+  - `model-steps-3.onnx` - 英文声学模型
+  - `tokens.txt` - 英文音素标记
+  - `espeak-ng-data/` - 英文发音数据
+- **共享声码器**：`vocos-22khz-univ.onnx` - 通用声码器模型
+- **自动下载**：首次使用时根据语言类型自动下载对应模型
 
 ## 技术亮点
 
@@ -351,10 +379,16 @@ include/
 - **队列管理**：`OrderedAudioQueue`确保音频连续播放
 - **内存优化**：及时释放已播放音频，节省内存
 
-### 🔧 中文TTS优化
-- **Jieba分词**：精确的中文文本分词
-- **音素映射**：完整的拼音到音素转换
-- **ISTFT后处理**：频域到时域的高质量音频重建
+### 🔧 多语言TTS优化
+- **中文TTS**：
+  - **Jieba分词**：精确的中文文本分词
+  - **音素映射**：完整的拼音到音素转换
+  - **ISTFT后处理**：频域到时域的高质量音频重建
+- **英文TTS**：
+  - **espeak-ng集成**：基于IPA音素的英文发音
+  - **音素过滤**：去除零宽连接符等问题字符
+  - **语言特定优化**：避免双重平滑处理，保持自然音质
+- **共享声码器**：高质量Vocos模型支持多语言音频生成
 
 ### 🎙️ 远场录音增强
 - **VAD Buffer 100倍放大**：显著提升远场语音检测能力
@@ -419,11 +453,26 @@ ollama pull qwen2.5:0.5b
 **Q: TTS无声音或音质差？**
 A: 
 - 检查TTS模型是否正确下载
+- 确认选择了正确的语言类型 (`--tts_type zh` 或 `--tts_type en`)
 - 调整TTS语速参数
 - 确认音频输出设备正常
 
+**Q: 英文TTS发音不准确？**
+A: 
+- 确保已安装espeak-ng：`sudo apt install espeak-ng` (Ubuntu) 或 `brew install espeak` (macOS)
+- 英文TTS依赖espeak-ng进行音素转换
+
 **Q: 播放顺序错乱？**
 A: 项目已使用`OrderedAudioQueue`解决此问题
+
+**Q: 如何切换中文/英文TTS？**
+```bash
+# 使用中文TTS
+./build/bin/asr_llm_tts --tts_type zh
+
+# 使用英文TTS  
+./build/bin/asr_llm_tts --tts_type en
+```
 
 ### 4. 性能优化
 **Q: 响应速度慢？**
@@ -481,6 +530,7 @@ int main() {
     TTSDemo::Params params;
     params.tts_speed = 1.0f;        // 正常语速
     params.tts_speaker_id = 0;      // 默认说话人
+    params.tts_type = "zh";         // 中文TTS，可选 "zh" 或 "en"
     
     // 创建TTS实例
     TTSDemo tts(params);
@@ -554,7 +604,14 @@ int main() {
 
 ## 更新日志
 
-### v2.4.0 (当前版本)
+### v2.5.0 (当前版本)
+- ✅ **英文TTS支持**：新增基于Matcha-TTS的英文语音合成功能
+- ✅ **多语言模型管理**：语言特定模型下载，按需获取中文/英文TTS模型
+- ✅ **espeak-ng集成**：支持IPA音素的英文文本到语音转换
+- ✅ **智能语言切换**：通过`--tts_type`参数轻松切换中英文TTS
+- ✅ **音频质量优化**：语言特定的音频后处理，消除英文TTS爆音问题
+
+### v2.4.0
 - ✅ **远场录音增强**：VAD buffer放大100倍，支持超远距离语音检测
 - ✅ **双声道采样处理**：智能左右声道混合，显著提升音频质量
 - ✅ **自适应放大算法**：根据信号强度动态调整放大倍数 (50x-300x)

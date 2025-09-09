@@ -13,13 +13,15 @@ public:
         float compression_ratio;
         float compression_threshold;
         bool use_rms_norm;
+        std::string tts_type;
         Params() :
             tts_speed(1.0f),
             tts_speaker_id(0),
             target_rms(0.15f),
             compression_ratio(2.0f),
             compression_threshold(0.7f),
-            use_rms_norm(true) {}
+            use_rms_norm(true),
+            tts_type("zh") {}
     };
 
     TTSDemo(const Params& params = Params());

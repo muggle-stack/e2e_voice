@@ -48,6 +48,7 @@ public:
         float compression_ratio;
         float compression_threshold;
         bool use_rms_norm;
+        std::string tts_type;
         
         // API params
         std::string api_key;
@@ -71,6 +72,7 @@ public:
             compression_ratio(2.0f),
             compression_threshold(0.7f),
             use_rms_norm(true),
+            tts_type("zh"),
             env_file(".env") {}
     };
 
@@ -145,7 +147,7 @@ public:
         
         // Download TTS models if needed
         tts::TTSModelDownloader tts_downloader;
-        if (!tts_downloader.ensureModelsExist()) {
+        if (!tts_downloader.ensureModelsExist(params_.tts_type)) {
             std::cerr << "Failed to ensure TTS models exist" << std::endl;
             return false;
         }
@@ -187,13 +189,28 @@ public:
         
         // Initialize TTS model
         tts::TTSConfig tts_config;
-        tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
-        tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
-        tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
-        tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
-        tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
-        tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
-        tts_config.language = "zh";
+        
+        if (params_.tts_type == "en") {
+            // English configuration
+            tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_MODEL);
+            tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+            tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_TOKENS);
+            tts_config.data_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_DATA_DIR);
+            tts_config.language = "en";
+            // No lexicon needed for English (uses espeak-ng)
+            tts_config.lexicon_path = "";
+            tts_config.dict_dir = "";
+            tts_config.jieba_dict_dir = "";
+        } else {
+            // Chinese configuration (default)
+            tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
+            tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+            tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
+            tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
+            tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
+            tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
+            tts_config.language = "zh";
+        }
         tts_config.sample_rate = 22050;
         tts_config.noise_scale = 1.0f;
         tts_config.length_scale = params_.tts_speed;
@@ -522,7 +539,7 @@ private:
         std::cout << "\n[TTS] Generated #" << order << " (" << generated_audio.duration() << "s audio in " << tts_duration << "s)" << std::endl;
         
         // Add to ordered playback queue
-        OrderedAudioData audio_data(std::move(generated_audio.samples), generated_audio.sample_rate, sentence, order);
+        OrderedAudioData audio_data(std::move(generated_audio.samples), generated_audio.sample_rate, sentence, order, params_.tts_type);
         audio_queue_->enqueue(audio_data);
     }
     
@@ -584,6 +601,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.15)" << std::endl;
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 2.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
+    std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English (default: zh)" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
     std::cout << "\nSupported APIs:" << std::endl;
     std::cout << "  - DeepSeek: --api_url https://api.deepseek.com/chat/completions" << std::endl;
@@ -663,6 +681,13 @@ int main(int argc, char** argv) {
         else if (arg == "--use_peak_norm") {
             params.use_rms_norm = false;
         }
+        else if (arg == "--tts_type" && i + 1 < argc) {
+            params.tts_type = argv[++i];
+            if (params.tts_type != "zh" && params.tts_type != "en") {
+                std::cerr << "Invalid TTS type: " << params.tts_type << ". Must be 'zh' or 'en'" << std::endl;
+                return 1;
+            }
+        }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             printUsage(argv[0]);
@@ -686,6 +711,7 @@ int main(int argc, char** argv) {
     std::cout << "  Max tokens: " << params.max_tokens << std::endl;
     std::cout << "  TTS speed: " << params.tts_speed << std::endl;
     std::cout << "  TTS speaker ID: " << params.tts_speaker_id << std::endl;
+    std::cout << "  TTS type: " << params.tts_type << std::endl;
     std::cout << std::endl;
     
     try {

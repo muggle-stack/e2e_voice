@@ -155,6 +155,10 @@ add_executable(asr_fc ${ASR_FC_SOURCES})
 set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/main_asr_llm_tts.cpp)
 add_executable(asr_llm_tts ${ASR_LLM_TTS_SOURCES})
 
+# ASR-LLM-TTS API executable
+set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp src/main_asr_llm_tts_api.cpp)
+add_executable(asr_llm_tts_api ${ASR_LLM_TTS_API_SOURCES})
+
 # TTS executable (standalone)
 set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} src/main_tts.cpp)
 add_executable(tts ${TTS_STANDALONE_SOURCES})
@@ -204,6 +208,9 @@ target_link_libraries(tts ${COMMON_LIBRARIES})
 # Link libraries for ASR-LLM-TTS executable
 target_link_libraries(asr_llm_tts ${COMMON_LIBRARIES})
 
+# Link libraries for ASR-LLM-TTS API executable
+target_link_libraries(asr_llm_tts_api ${COMMON_LIBRARIES})
+
 # Link libraries for Streaming ASR executable
 target_link_libraries(streaming_asr ${COMMON_LIBRARIES})
 
@@ -222,6 +229,8 @@ target_link_directories(tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
+target_link_directories(asr_llm_tts_api PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
+target_link_directories(asr_llm_tts_api PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(streaming_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(streaming_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
 
@@ -239,11 +248,13 @@ target_compile_options(tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(asr_llm_tts_api PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(asr_llm_tts_api PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
 
 # Set output directory for all executables
-set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts tts streaming_asr PROPERTIES
+set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

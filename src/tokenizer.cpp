@@ -4,6 +4,8 @@
 #include <sstream>
 #include <regex>
 #include <algorithm>
+#include <unistd.h>  // for dup, dup2, close
+#include <fcntl.h>   // for open
 
 Tokenizer::Tokenizer(const Config& config)
     : config_(config), memory_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
@@ -15,7 +17,17 @@ Tokenizer::~Tokenizer() {
 
 bool Tokenizer::initialize() {
     try {
+        // Temporarily suppress stderr to avoid ONNX schema warnings
+        int stderr_fd = dup(STDERR_FILENO);
+        int devnull_fd = open("/dev/null", O_WRONLY);
+        dup2(devnull_fd, STDERR_FILENO);
+        
         env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "Tokenizer");
+        
+        // Restore stderr
+        dup2(stderr_fd, STDERR_FILENO);
+        close(stderr_fd);
+        close(devnull_fd);
         
         if (!loadVocabulary()) {
             std::cerr << "Failed to load vocabulary" << std::endl;

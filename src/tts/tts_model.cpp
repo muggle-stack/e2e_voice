@@ -17,6 +17,8 @@
 #include <fftw3.h>
 #include <regex>
 #include <mutex>
+#include <unistd.h>  // for dup, dup2, close
+#include <fcntl.h>   // for open
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -437,7 +439,17 @@ public:
     bool initialize() {
         try {
             // Initialize ONNX Runtime
+            // Temporarily suppress stderr to avoid ONNX schema warnings
+            int stderr_fd = dup(STDERR_FILENO);
+            int devnull_fd = open("/dev/null", O_WRONLY);
+            dup2(devnull_fd, STDERR_FILENO);
+            
             env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "TTSModel");
+            
+            // Restore stderr
+            dup2(stderr_fd, STDERR_FILENO);
+            close(stderr_fd);
+            close(devnull_fd);
             
             Ort::SessionOptions session_options;
             session_options.SetIntraOpNumThreads(3);
@@ -458,12 +470,33 @@ public:
             // Load token to ID mapping
             token_to_id_ = readTokenToIdMap(config_.tokens_path);
             
-            // Load lexicon
-            lexicon_ = readLexicon(config_.lexicon_path);
+            // Load lexicon (only for Chinese or if lexicon file exists)
+            if (config_.language == "zh" && !config_.lexicon_path.empty()) {
+                if (std::filesystem::exists(config_.lexicon_path)) {
+                    lexicon_ = readLexicon(config_.lexicon_path);
+                } else {
+                    std::cout << "Warning: Lexicon file not found: " << config_.lexicon_path << ". Continuing without lexicon." << std::endl;
+                }
+            } else if (config_.language == "en") {
+                std::cout << "Info: English mode - lexicon not required." << std::endl;
+                
+                // Check if espeak-ng is available for English TTS
+                if (!checkEspeakNgAvailable()) {
+                    std::cerr << "Error: espeak-ng is required for English TTS but not available." << std::endl;
+                    std::cerr << "Please install espeak-ng using: brew install espeak-ng (macOS) or apt-get install espeak-ng (Linux)" << std::endl;
+                    throw std::runtime_error("espeak-ng not available for English TTS");
+                }
+                std::cout << "Info: espeak-ng found and available for English TTS." << std::endl;
+            }
             
             // Initialize Jieba for Chinese
             if (config_.language == "zh") {
-                initializeJieba();
+                try {
+                    initializeJieba();
+                } catch (const std::exception& e) {
+                    std::cout << "Warning: Failed to initialize Jieba: " << e.what() << ". Continuing without Jieba." << std::endl;
+                    jieba_ = nullptr;
+                }
             }
             
             // Get model metadata
@@ -845,10 +878,79 @@ private:
                     token_ids.insert(token_ids.end(), word_ids.begin(), word_ids.end());
                 }
             }
+        } else if (config_.language == "en") {
+            // English text processing
+            
+            // First, check if text contains Chinese characters - if so, skip it silently
+            if (containsChinese(text)) {
+                // Silently skip Chinese text when in English mode
+                return token_ids; // Return empty token_ids
+            }
+            
+            // English text processing using espeak-ng for phoneme generation
+            std::string phonemes = processEnglishTextToPhonemes(text);
+            if (phonemes.empty() && !text.empty()) {
+                // espeak-ng is required for proper English TTS
+                std::cerr << "Error: espeak-ng is required for English TTS but not available. Please install espeak-ng." << std::endl;
+                return token_ids; // Return empty token_ids to skip this text
+            }
+            
+            // Add start token (^) - sherpa-onnx style
+            auto start_it = token_to_id_.find("^");
+            if (start_it != token_to_id_.end()) {
+                token_ids.push_back(start_it->second);
+            }
+            
+            // Process phonemes character by character (IPA symbols)
+            std::vector<std::string> phoneme_chars = splitUtf8(phonemes);
+            bool last_was_space = false; // Track consecutive spaces to reduce excessive blanks
+            
+            for (const auto& phoneme_char : phoneme_chars) {
+                if (phoneme_char.empty()) continue;
+                
+                // Filter out problematic characters
+                if (phoneme_char == "\u200D" || // Zero-width joiner
+                    phoneme_char == "\u200C" || // Zero-width non-joiner
+                    phoneme_char == "\uFEFF" || // Byte order mark
+                    phoneme_char == "\u00A0" || // Non-breaking space
+                    phoneme_char.size() == 1 && std::iscntrl(static_cast<unsigned char>(phoneme_char[0]))) {
+                    continue; // Skip these characters
+                }
+                
+                // Handle spaces - limit consecutive spaces to reduce excessive blanks
+                if (phoneme_char == " ") {
+                    if (last_was_space) {
+                        continue; // Skip consecutive spaces
+                    }
+                    last_was_space = true;
+                } else {
+                    last_was_space = false;
+                }
+                
+                auto token_it = token_to_id_.find(phoneme_char);
+                if (token_it != token_to_id_.end()) {
+                    token_ids.push_back(token_it->second);
+                } else if (phoneme_char != " ") { // Don't warn about spaces
+                    // Only log unknown tokens that aren't common formatting characters
+                    std::cerr << "Warning: Unknown phoneme token: '" << phoneme_char << "' (hex: ";
+                    for (unsigned char c : phoneme_char) {
+                        std::cerr << std::hex << (int)c << " ";
+                    }
+                    std::cerr << ")" << std::endl;
+                }
+            }
+            
+            // Add end token ($) - sherpa-onnx style
+            auto end_it = token_to_id_.find("$");
+            if (end_it != token_to_id_.end()) {
+                token_ids.push_back(end_it->second);
+            }
+            
+            return token_ids;
         } else {
-            // For non-Chinese text, skip it since this model only supports Chinese
+            // For other languages, skip with warning
             if (!text.empty()) {
-                std::cerr << "Warning: This TTS model only supports Chinese. Non-Chinese text will be skipped: " << text << std::endl;
+                std::cerr << "Warning: Unsupported language '" << config_.language << "'. Text will be skipped: " << text << std::endl;
             }
             return token_ids;
         }
@@ -867,7 +969,129 @@ private:
         return puncts.count(s);
     }
     
+    // Helper function to check if a character is Chinese (CJK)
+    bool isChinese(unsigned char ch) {
+        // Simple check for Chinese characters using UTF-8 byte patterns
+        // Chinese characters typically start with bytes in range 0xE4-0xE9
+        return ch >= 0xE4 && ch <= 0xE9;
+    }
     
+    // Helper function to check if text contains Chinese characters
+    bool containsChinese(const std::string& text) {
+        for (size_t i = 0; i < text.length(); i++) {
+            unsigned char ch = static_cast<unsigned char>(text[i]);
+            if (isChinese(ch)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Check if espeak-ng is available
+    bool checkEspeakNgAvailable() {
+        // Try to run espeak-ng with a simple test
+        std::string command = "echo 'test' | espeak-ng -q --ipa=3 2>/dev/null";
+        
+        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+        if (!pipe) {
+            return false;
+        }
+        
+        char buffer[128];
+        std::string result;
+        if (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+            result += buffer;
+        }
+        
+        int exit_status = pclose(pipe.release());
+        return exit_status == 0 && !result.empty();
+    }
+    
+    // Convert English text to IPA phonemes using espeak-ng
+    std::string processEnglishTextToPhonemes(const std::string& text) {
+        if (text.empty()) {
+            return "";
+        }
+        
+        // Escape single quotes in text to avoid shell command issues
+        std::string escaped_text = text;
+        std::string::size_type pos = 0;
+        while ((pos = escaped_text.find("'", pos)) != std::string::npos) {
+            escaped_text.replace(pos, 1, "'\"'\"'");
+            pos += 5;
+        }
+        
+        // Use espeak-ng to convert text to IPA phonemes
+        std::string command = "echo '" + escaped_text + "' | espeak-ng -q --ipa=3";
+        
+        // Set espeak-ng data directory if available
+        if (!config_.data_dir.empty() && std::filesystem::exists(config_.data_dir)) {
+            command = "ESPEAK_DATA_PATH='" + config_.data_dir + "' " + command;
+        }
+        
+        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+        if (!pipe) {
+            std::cerr << "Error: Failed to run espeak-ng command" << std::endl;
+            return "";
+        }
+        
+        char buffer[4096];
+        std::string result;
+        while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+            result += buffer;
+        }
+        
+        // Wait for the command to complete and check exit status
+        int exit_status = pclose(pipe.release());
+        if (exit_status != 0) {
+            // Command failed, return empty to trigger fallback
+            return "";
+        }
+        
+        // Clean up the result - remove newlines and extra whitespace
+        result.erase(std::remove_if(result.begin(), result.end(), 
+            [](char c) { return c == '\n' || c == '\r'; }), result.end());
+        
+        // Replace multiple consecutive spaces with single space
+        std::regex multi_space("\\s+");
+        result = std::regex_replace(result, multi_space, " ");
+        
+        // Trim whitespace
+        size_t start = result.find_first_not_of(" \t");
+        if (start == std::string::npos) {
+            return "";
+        }
+        size_t end = result.find_last_not_of(" \t");
+        result = result.substr(start, end - start + 1);
+        
+        return result;
+    }
+    
+    // Helper function to split UTF-8 string into individual characters
+    std::vector<std::string> splitUtf8(const std::string& str) {
+        std::vector<std::string> result;
+        for (size_t i = 0; i < str.length();) {
+            int char_len = 1;
+            unsigned char c = str[i];
+            
+            // Determine UTF-8 character length
+            if ((c & 0x80) == 0) {
+                char_len = 1;  // ASCII
+            } else if ((c & 0xE0) == 0xC0) {
+                char_len = 2;  // 2-byte UTF-8
+            } else if ((c & 0xF0) == 0xE0) {
+                char_len = 3;  // 3-byte UTF-8
+            } else if ((c & 0xF8) == 0xF0) {
+                char_len = 4;  // 4-byte UTF-8
+            }
+            
+            if (i + char_len <= str.length()) {
+                result.push_back(str.substr(i, char_len));
+            }
+            i += char_len;
+        }
+        return result;
+    }
     
     std::vector<int64_t> convertWordToIds(const std::string& word) {
         // Convert word to lowercase for lookup (following sherpa-onnx)
@@ -875,10 +1099,12 @@ private:
         std::transform(lower_word.begin(), lower_word.end(), lower_word.begin(), ::tolower);
         
         
-        // Try direct word lookup in lexicon first
-        auto lex_it = lexicon_.find(lower_word);
-        if (lex_it != lexicon_.end()) {
-            return convertPhonemesToIds(lex_it->second);
+        // Try direct word lookup in lexicon first (only if lexicon is loaded)
+        if (!lexicon_.empty()) {
+            auto lex_it = lexicon_.find(lower_word);
+            if (lex_it != lexicon_.end()) {
+                return convertPhonemesToIds(lex_it->second);
+            }
         }
         
         // Try direct token lookup
@@ -905,13 +1131,22 @@ private:
         std::vector<std::string> chars = splitUtf8(word);
         
         for (const auto& char_str : chars) {
-            auto char_lex_it = lexicon_.find(char_str);
-            if (char_lex_it != lexicon_.end()) {
-                auto char_ids = convertPhonemesToIds(char_lex_it->second);
-                result.insert(result.end(), char_ids.begin(), char_ids.end());
+            if (!lexicon_.empty()) {
+                auto char_lex_it = lexicon_.find(char_str);
+                if (char_lex_it != lexicon_.end()) {
+                    auto char_ids = convertPhonemesToIds(char_lex_it->second);
+                    result.insert(result.end(), char_ids.begin(), char_ids.end());
+                } else {
+                    // Last resort: try direct token lookup for the character
+                    auto char_token_it = token_to_id_.find(char_str);
+                    if (char_token_it != token_to_id_.end()) {
+                        result.push_back(char_token_it->second);
+                    } else {
+                        std::cerr << "Warning: No mapping for character: '" << char_str << "'" << std::endl;
+                    }
+                }
             } else {
-                
-                // Last resort: try direct token lookup for the character
+                // No lexicon available, try direct token lookup
                 auto char_token_it = token_to_id_.find(char_str);
                 if (char_token_it != token_to_id_.end()) {
                     result.push_back(char_token_it->second);
@@ -948,23 +1183,6 @@ private:
         return ids;
     }
     
-    std::vector<std::string> splitUtf8(const std::string& str) {
-        std::vector<std::string> result;
-        for (size_t i = 0; i < str.length(); ) {
-            int char_len = 1;
-            unsigned char ch = str[i];
-            if ((ch & 0x80) == 0) char_len = 1;
-            else if ((ch & 0xE0) == 0xC0) char_len = 2;
-            else if ((ch & 0xF0) == 0xE0) char_len = 3;
-            else if ((ch & 0xF8) == 0xF0) char_len = 4;
-            
-            if (i + char_len <= str.length()) {
-                result.push_back(str.substr(i, char_len));
-            }
-            i += char_len;
-        }
-        return result;
-    }
     
     std::string mapPunctuation(const std::string& punct) {
         // Try to find the punctuation directly in tokens first

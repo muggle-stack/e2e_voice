@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <unistd.h>  // for dup, dup2, close
+#include <fcntl.h>   // for open
 
 VADDetector::VADDetector(const Config& config)
     : config_(config), memory_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
@@ -14,7 +16,17 @@ VADDetector::~VADDetector() {
 
 bool VADDetector::initialize() {
     try {
+        // Temporarily suppress stderr to avoid ONNX schema warnings
+        int stderr_fd = dup(STDERR_FILENO);
+        int devnull_fd = open("/dev/null", O_WRONLY);
+        dup2(devnull_fd, STDERR_FILENO);
+        
         env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "VADDetector");
+        
+        // Restore stderr
+        dup2(stderr_fd, STDERR_FILENO);
+        close(stderr_fd);
+        close(devnull_fd);
         
         if (!initializeSession()) {
             return false;

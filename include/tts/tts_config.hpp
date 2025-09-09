@@ -23,7 +23,7 @@ struct TTSConfig {
     // Runtime parameters
     int sample_rate = 22050;           // Output sample rate
     int max_num_sentences = 5;         // Max sentences per batch
-    std::string language = "zh";       // Language: "zh" only (English not supported)
+    std::string language = "zh";       // Language: "zh" or "en" supported
     
     // Audio normalization parameters
     float target_rms = 0.15f;          // Target RMS level (0.15 = -16.5dB, louder)

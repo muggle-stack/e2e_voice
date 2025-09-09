@@ -13,6 +13,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <unistd.h>  // for dup, dup2, close
+#include <fcntl.h>   // for open
 
 #include "audio_recorder.hpp"
 #include "vad_detector.hpp"
@@ -47,6 +49,7 @@ public:
         float compression_ratio;
         float compression_threshold;
         bool use_rms_norm;
+        std::string tts_type;
         
         Params() :
             sample_rate(16000),
@@ -63,7 +66,8 @@ public:
             target_rms(0.15f),
             compression_ratio(2.0f),
             compression_threshold(0.7f),
-            use_rms_norm(true) {}
+            use_rms_norm(true),
+            tts_type("zh") {}
     };
 
     ASRLLMTTSDemo(const Params& params = Params()) : params_(params) {}
@@ -119,7 +123,7 @@ public:
         
         // Download TTS models if needed
         tts::TTSModelDownloader tts_downloader;
-        if (!tts_downloader.ensureModelsExist()) {
+        if (!tts_downloader.ensureModelsExist(params_.tts_type)) {
             std::cerr << "Failed to ensure TTS models exist" << std::endl;
             return false;
         }
@@ -161,13 +165,28 @@ public:
         
         // Initialize TTS model
         tts::TTSConfig tts_config;
-        tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
-        tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
-        tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
-        tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
-        tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
-        tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
-        tts_config.language = "zh";
+        
+        if (params_.tts_type == "en") {
+            // English configuration
+            tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_MODEL);
+            tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+            tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_TOKENS);
+            tts_config.data_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_DATA_DIR);
+            tts_config.language = "en";
+            // No lexicon needed for English (uses espeak-ng)
+            tts_config.lexicon_path = "";
+            tts_config.dict_dir = "";
+            tts_config.jieba_dict_dir = "";
+        } else {
+            // Chinese configuration (default)
+            tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
+            tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER);
+            tts_config.lexicon_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_LEXICON);
+            tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_TOKENS);
+            tts_config.dict_dir = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_DICT_DIR);
+            tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
+            tts_config.language = "zh";
+        }
         tts_config.sample_rate = 22050;
         tts_config.noise_scale = 1.0f;
         tts_config.length_scale = params_.tts_speed;
@@ -621,7 +640,7 @@ private:
         std::cout << "\n[TTS] Generated #" << order << " (" << generated_audio.duration() << "s audio in " << tts_duration << "s)" << std::endl;
         
         // Add to ordered playback queue
-        OrderedAudioData audio_data(std::move(generated_audio.samples), generated_audio.sample_rate, sentence, order);
+        OrderedAudioData audio_data(std::move(generated_audio.samples), generated_audio.sample_rate, sentence, order, params_.tts_type);
         audio_queue_->enqueue(audio_data);
     }
     
@@ -676,6 +695,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --model <model_name>        LLM model name (default: qwen2.5:0.5b)" << std::endl;
     std::cout << "  --tts_speed <value>         TTS speech speed (default: 1.0, >1.0 = slower)" << std::endl;
     std::cout << "  --tts_speaker <value>       TTS speaker ID for multi-speaker models (default: 0)" << std::endl;
+    std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English (default: zh)" << std::endl;
     std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.1)" << std::endl;
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
@@ -683,6 +703,11 @@ void printUsage(const char* program_name) {
 }
 
 int main(int argc, char** argv) {
+    // Temporarily suppress stderr to avoid ONNX schema warnings during startup
+    int stderr_fd = dup(STDERR_FILENO);
+    int devnull_fd = open("/dev/null", O_WRONLY);
+    dup2(devnull_fd, STDERR_FILENO);
+    
     std::cout << "ASR-LLM-TTS C++ Demo Application" << std::endl;
     std::cout << "=================================" << std::endl;
     
@@ -733,6 +758,9 @@ int main(int argc, char** argv) {
         else if (arg == "--tts_speaker" && i + 1 < argc) {
             params.tts_speaker_id = std::atoi(argv[++i]);
         }
+        else if (arg == "--tts_type" && i + 1 < argc) {
+            params.tts_type = argv[++i];
+        }
         else if (arg == "--target_rms" && i + 1 < argc) {
             params.target_rms = std::atof(argv[++i]);
         }
@@ -769,9 +797,18 @@ int main(int argc, char** argv) {
     try {
         ASRLLMTTSDemo demo(params);
         if (!demo.initialize()) {
+            // Restore stderr before showing error
+            dup2(stderr_fd, STDERR_FILENO);
+            close(stderr_fd);
+            close(devnull_fd);
             std::cerr << "Failed to initialize demo" << std::endl;
             return 1;
         }
+        
+        // Restore stderr after successful initialization
+        dup2(stderr_fd, STDERR_FILENO);
+        close(stderr_fd);
+        close(devnull_fd);
         
         demo.run();
         

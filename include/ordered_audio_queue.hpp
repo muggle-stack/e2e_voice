@@ -13,10 +13,11 @@ struct OrderedAudioData {
     int sample_rate;
     std::string text;
     size_t order;  // 顺序号
+    std::string language;  // Language for conditional smoothing
     
-    OrderedAudioData() : sample_rate(22050), order(0) {}
-    OrderedAudioData(std::vector<float> s, int sr, const std::string& t, size_t ord) 
-        : samples(std::move(s)), sample_rate(sr), text(t), order(ord) {}
+    OrderedAudioData() : sample_rate(22050), order(0), language("zh") {}
+    OrderedAudioData(std::vector<float> s, int sr, const std::string& t, size_t ord, const std::string& lang = "zh") 
+        : samples(std::move(s)), sample_rate(sr), text(t), order(ord), language(lang) {}
 };
 
 class OrderedAudioQueue {
@@ -41,7 +42,9 @@ public:
 
 private:
     void playbackWorker();
-    void playAudioBlocking(const std::vector<float>& samples, int sample_rate);
+    void playAudioBlocking(const OrderedAudioData& audio);
+    void applySentenceTransitionSmoothing(std::vector<float>& samples, int sample_rate);
+    void removeDCOffset(std::vector<float>& samples);
     
     std::map<size_t, OrderedAudioData> audio_map_;  // 按顺序号存储
     size_t next_play_order_;  // 下一个要播放的顺序号
