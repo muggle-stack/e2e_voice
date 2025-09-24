@@ -23,12 +23,12 @@ static void WaitForEnter(const std::string& prompt) {
     std::getline(std::cin, dummy);
 }
 
-// Simple audio recorder for registration
-class SimpleAudioRecorder {
+// Speaker recognition audio recorder for registration
+class SRAudioRecorder {
 public:
-    SimpleAudioRecorder() : stream_(nullptr) {}
+    SRAudioRecorder() : stream_(nullptr) {}
 
-    ~SimpleAudioRecorder() {
+    ~SRAudioRecorder() {
         if (stream_) {
             Pa_CloseStream(stream_);
         }
@@ -118,7 +118,7 @@ private:
     std::string last_error_;
 };
 
-static bool RecordSamples(SimpleAudioRecorder& recorder,
+static bool RecordSamples(SRAudioRecorder& recorder,
                           std::vector<float>& samples,
                           int index) {
     WaitForEnter("按 Enter 键开始录音...");
@@ -271,7 +271,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::vector<float>> embeddings;
 
     if (use_recording) {
-        SimpleAudioRecorder recorder;
+        SRAudioRecorder recorder;
         if (!recorder.Initialize(kRecordingSampleRate, kRecordingChannels)) {
             std::cerr << "录音初始化失败: " << recorder.GetLastError() << "\n";
             return 1;
