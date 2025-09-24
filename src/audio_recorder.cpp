@@ -1,5 +1,9 @@
 #include "audio_recorder.hpp"
 #include "vad_detector.hpp"
+#ifdef WITH_SPEAKER_RECOGNITION
+#include "speaker_recognition.hpp"
+#include "speaker_model_downloader.hpp"
+#endif
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -151,6 +155,20 @@ bool AudioRecorder::initialize() {
         std::cerr << "Failed to open stream: " << Pa_GetErrorText(err) << std::endl;
         return false;
     }
+
+    // Initialize speaker recognition if enabled
+#ifdef WITH_SPEAKER_RECOGNITION
+    if (config_.enable_speaker_recognition) {
+        std::cout << "[Speaker Recognition] Enabled, initializing..." << std::endl;
+        if (!initializeSpeakerRecognition()) {
+            std::cerr << "Warning: Failed to initialize speaker recognition" << std::endl;
+            // Continue without speaker recognition
+            config_.enable_speaker_recognition = false;
+        }
+    } else {
+        std::cout << "[Speaker Recognition] Disabled" << std::endl;
+    }
+#endif
 
     return true;
 }
@@ -390,16 +408,16 @@ std::vector<float> AudioRecorder::recordAudio() {
     audio_buffer_.clear();
     pre_speech_buffer_.clear();
     vad_buffer_.clear(); // Clear VAD buffer for new recording
-    
+
     // Reset VAD state counters (for energy VAD)
     vad_speech_count_ = 0;
     vad_silence_count_ = 0;
-    
+
     speech_detected_.store(false);
     should_stop_.store(false);
     recording_start_time_ = std::chrono::steady_clock::now();
     last_speech_time_ = recording_start_time_;
-    
+
     // Reset VAD detector state if using Silero VAD
     if (vad_detector_) {
         vad_detector_->reset();
@@ -424,6 +442,35 @@ std::vector<float> AudioRecorder::recordAudio() {
     }
 
     std::lock_guard<std::mutex> lock(buffer_mutex_);
+
+    // Perform speaker identification if enabled
+#ifdef WITH_SPEAKER_RECOGNITION
+    if (config_.enable_speaker_recognition && speaker_embedder_ && speaker_manager_) {
+        std::cout << "[Speaker Recognition] Starting identification..." << std::endl;
+        std::cout << "[Speaker Recognition] Audio buffer size: " << audio_buffer_.size()
+                  << " samples (" << (float)audio_buffer_.size() / config_.sample_rate << "s)" << std::endl;
+
+        last_identified_speaker_ = identifySpeaker(audio_buffer_);
+
+        if (!last_identified_speaker_.empty()) {
+            std::cout << "[Speaker Recognition] ✓ Identified speaker: " << last_identified_speaker_ << std::endl;
+            speaker_registered_ = true;
+        } else {
+            std::cout << "[Speaker Recognition] ✗ Unknown speaker or no match found" << std::endl;
+            std::cout << "[Speaker Recognition] Threshold: " << config_.speaker_threshold << std::endl;
+            speaker_registered_ = false;
+        }
+    } else {
+        if (!config_.enable_speaker_recognition) {
+            std::cout << "[Speaker Recognition] Not enabled" << std::endl;
+        } else if (!speaker_embedder_) {
+            std::cout << "[Speaker Recognition] Embedder not initialized" << std::endl;
+        } else if (!speaker_manager_) {
+            std::cout << "[Speaker Recognition] Manager not initialized" << std::endl;
+        }
+    }
+#endif
+
     return audio_buffer_;
 }
 
@@ -572,3 +619,153 @@ float AudioRecorder::computeSileroVAD(const std::vector<float>& audio_chunk) {
     // Not enough data yet, return low probability
     return 0.0f;
 }
+
+#ifdef WITH_SPEAKER_RECOGNITION
+bool AudioRecorder::initializeSpeakerRecognition() {
+    if (!config_.enable_speaker_recognition) {
+        return true; // Not an error if not enabled
+    }
+
+    std::cout << "[Speaker Recognition] Initializing..." << std::endl;
+
+    // Initialize model downloader
+    SRModelDownloader downloader;
+    if (!downloader.ensureModelsExist()) {
+        std::cerr << "[Speaker Recognition] Failed to ensure models exist" << std::endl;
+        return false;
+    }
+
+    // Create embedder
+    speaker_recognition::EmbedderConfig embedder_config;
+    embedder_config.model_path = downloader.getModelPath(SRModelDownloader::AR_MODEL_NAME);
+    embedder_config.num_threads = 1;
+    embedder_config.debug = false;
+    embedder_config.provider = "cpu";
+
+    speaker_embedder_ = speaker_recognition::SpeakerEmbedder::Create(embedder_config);
+    if (!speaker_embedder_) {
+        std::cerr << "[Speaker Recognition] Failed to create speaker embedder" << std::endl;
+        return false;
+    }
+
+    // Create manager
+    speaker_manager_ = speaker_recognition::SpeakerManager::Create(speaker_embedder_->GetEmbeddingDimension());
+    if (!speaker_manager_) {
+        std::cerr << "[Speaker Recognition] Failed to create speaker manager" << std::endl;
+        return false;
+    }
+
+    // Load existing database
+    if (!config_.speaker_database.empty()) {
+        if (speaker_manager_->LoadDatabase(config_.speaker_database)) {
+            std::cout << "[Speaker Recognition] Loaded " << speaker_manager_->GetSpeakerCount()
+                      << " speakers from " << config_.speaker_database << std::endl;
+
+            // List all speakers
+            auto speakers = speaker_manager_->GetAllSpeakers();
+            if (!speakers.empty()) {
+                std::cout << "[Speaker Recognition] Registered speakers: ";
+                for (size_t i = 0; i < speakers.size(); ++i) {
+                    std::cout << speakers[i];
+                    if (i < speakers.size() - 1) std::cout << ", ";
+                }
+                std::cout << std::endl;
+            }
+        } else {
+            std::cout << "[Speaker Recognition] No existing database found or failed to load" << std::endl;
+        }
+    }
+
+    std::cout << "[Speaker Recognition] Initialization complete" << std::endl;
+    return true;
+}
+
+std::string AudioRecorder::identifySpeaker(const std::vector<float>& audio) {
+    if (!speaker_embedder_ || !speaker_manager_ || audio.empty()) {
+        if (!speaker_embedder_) std::cerr << "[Speaker Recognition] Error: Embedder is null" << std::endl;
+        if (!speaker_manager_) std::cerr << "[Speaker Recognition] Error: Manager is null" << std::endl;
+        if (audio.empty()) std::cerr << "[Speaker Recognition] Error: Audio is empty" << std::endl;
+        return "";
+    }
+
+    constexpr int32_t kModelSampleRate = 16000;
+    int32_t input_sample_rate = config_.sample_rate;
+
+    std::cout << "[Speaker Recognition] Processing " << audio.size() << " samples at "
+              << input_sample_rate << "Hz (expected 16000Hz for model)" << std::endl;
+
+    // IMPORTANT: Speaker recognition model expects 16000Hz audio
+    // If sample rate is different, resample to match the model requirement
+    if (input_sample_rate != kModelSampleRate) {
+        std::cout << "[Speaker Recognition] Resampling from " << input_sample_rate
+                  << "Hz to " << kModelSampleRate << "Hz" << std::endl;
+    }
+
+    // Create a stream and process audio
+    auto stream = speaker_embedder_->CreateStream();
+
+    // Convert stereo to mono if needed
+    std::vector<float> mono_audio;
+    if (config_.channels == 2) {
+        mono_audio.reserve(audio.size() / 2);
+        for (size_t i = 0; i < audio.size(); i += 2) {
+            float left = audio[i];
+            float right = (i + 1 < audio.size()) ? audio[i + 1] : left;
+            mono_audio.push_back((left + right) / 2.0f);
+        }
+        std::cout << "[Speaker Recognition] Converted stereo to mono: " << mono_audio.size() << " samples" << std::endl;
+    } else {
+        mono_audio = audio;
+        std::cout << "[Speaker Recognition] Using mono audio: " << mono_audio.size() << " samples" << std::endl;
+    }
+
+    if (input_sample_rate != kModelSampleRate) {
+        mono_audio = resampleMono(mono_audio, input_sample_rate, kModelSampleRate);
+        input_sample_rate = kModelSampleRate;
+    }
+
+    stream->AcceptWaveform(input_sample_rate, mono_audio);
+    stream->InputFinished();
+
+    if (!speaker_embedder_->IsStreamReady(stream.get())) {
+        std::cerr << "[Speaker Recognition] Audio too short for embedding (need at least 0.5s)" << std::endl;
+        return "";
+    }
+
+    // Compute embedding
+    std::cout << "[Speaker Recognition] Computing embedding..." << std::endl;
+    auto embedding = speaker_embedder_->ComputeEmbedding(stream.get());
+    if (embedding.empty()) {
+        std::cerr << "[Speaker Recognition] Failed to compute embedding" << std::endl;
+        return "";
+    }
+    std::cout << "[Speaker Recognition] Embedding computed, dimension: " << embedding.size() << std::endl;
+
+    // Get best matches to show scores
+    auto matches = speaker_manager_->GetBestMatches(embedding, 0.0f, 5);
+    std::cout << "[Speaker Recognition] Top matches:" << std::endl;
+    for (const auto& match : matches) {
+        std::cout << "  - " << match.name << ": score=" << match.score
+                  << (match.score >= config_.speaker_threshold ? " ✓" : " ✗") << std::endl;
+    }
+
+    // Search for speaker
+    std::string identified = speaker_manager_->SearchSpeaker(embedding, config_.speaker_threshold);
+    if (!identified.empty()) {
+        std::cout << "[Speaker Recognition] Match found: " << identified << std::endl;
+    } else {
+        std::cout << "[Speaker Recognition] No match above threshold " << config_.speaker_threshold << std::endl;
+    }
+
+    return identified;
+}
+#else
+// Stub implementations when speaker recognition is disabled
+bool AudioRecorder::initializeSpeakerRecognition() {
+    return true;
+}
+
+std::string AudioRecorder::identifySpeaker(const std::vector<float>& audio) {
+    return "";
+}
+#endif

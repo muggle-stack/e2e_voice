@@ -15,6 +15,13 @@
 // Forward declaration
 class VADDetector;
 
+#ifdef WITH_SPEAKER_RECOGNITION
+namespace speaker_recognition {
+    class SpeakerEmbedder;
+    class SpeakerManager;
+}
+#endif
+
 class AudioRecorder {
 public:
     using AudioCallback = std::function<void(const std::vector<float>&)>;
@@ -29,6 +36,10 @@ public:
         double trigger_threshold = 0.6;
         double stop_threshold = 0.35;
         std::string vad_type = "energy"; // "energy" or "silero"
+        // Speaker recognition settings
+        bool enable_speaker_recognition = false;
+        float speaker_threshold = 0.6f;
+        std::string speaker_database = "speakers.db";
     };
 
     AudioRecorder();
@@ -49,9 +60,15 @@ public:
     
     // Set VAD callback
     void setVADCallback(AudioCallback callback) { vad_callback_ = callback; }
-    
+
     // Set VAD detector for Silero VAD
     void setVADDetector(VADDetector* vad_detector) { vad_detector_ = vad_detector; }
+
+    // Speaker recognition methods
+    bool initializeSpeakerRecognition();
+    std::string identifySpeaker(const std::vector<float>& audio);
+    std::string getLastIdentifiedSpeaker() const { return last_identified_speaker_; }
+    bool isSpeakerRegistered() const { return speaker_registered_; }
 
 private:
     static int audioCallback(const void* input_buffer, void* output_buffer,
@@ -98,4 +115,12 @@ private:
     int vad_speech_count_ = 0;
     int vad_silence_count_ = 0;
     int vad_required_consecutive_frames_ = 3;
+
+    // Speaker recognition components
+#ifdef WITH_SPEAKER_RECOGNITION
+    std::unique_ptr<speaker_recognition::SpeakerEmbedder> speaker_embedder_;
+    std::unique_ptr<speaker_recognition::SpeakerManager> speaker_manager_;
+#endif
+    std::string last_identified_speaker_;
+    bool speaker_registered_ = false;
 };

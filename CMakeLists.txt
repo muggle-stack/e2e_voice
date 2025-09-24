@@ -116,6 +116,16 @@ set(COMMON_SOURCES
     src/model_downloader.cpp
 )
 
+# Speaker Recognition sources
+set(SPEAKER_SOURCES
+    src/speaker_embedder.cpp
+    src/speaker_manager.cpp
+    src/mel_filterbank.cpp
+    src/onnx_utils.cpp
+    src/wave_reader.cpp
+    src/speaker_model_downloader.cpp
+)
+
 # ASE source files
 set(ASE_SOURCES
     src/asr_model.cpp
@@ -151,13 +161,24 @@ add_executable(asr_correct ${ASR_CORRECT_SOURCES})
 set(ASR_FC_SOURCES ${COMMON_SOURCES} src/main_fc.cpp)
 add_executable(asr_fc ${ASR_FC_SOURCES})
 
-# ASR-LLM-TTS executable
-set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/main_asr_llm_tts.cpp)
+# ASR-LLM-TTS executable (with speaker recognition)
+set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/main_asr_llm_tts.cpp)
 add_executable(asr_llm_tts ${ASR_LLM_TTS_SOURCES})
+target_compile_definitions(asr_llm_tts PRIVATE WITH_SPEAKER_RECOGNITION)
 
 # ASR-LLM-TTS API executable
 set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp src/main_asr_llm_tts_api.cpp)
 add_executable(asr_llm_tts_api ${ASR_LLM_TTS_API_SOURCES})
+
+# Register Speaker executable (with speaker recognition)
+set(REGISTER_SPEAKER_SOURCES ${SPEAKER_SOURCES} src/register_speaker.cpp)
+add_executable(register_speaker ${REGISTER_SPEAKER_SOURCES})
+target_compile_definitions(register_speaker PRIVATE WITH_SPEAKER_RECOGNITION)
+
+# List Speakers executable (with speaker recognition)
+set(LIST_SPEAKERS_SOURCES ${SPEAKER_SOURCES} src/list_speakers.cpp)
+add_executable(list_speakers ${LIST_SPEAKERS_SOURCES})
+target_compile_definitions(list_speakers PRIVATE WITH_SPEAKER_RECOGNITION)
 
 # TTS executable (standalone)
 set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} src/main_tts.cpp)
@@ -211,6 +232,12 @@ target_link_libraries(asr_llm_tts ${COMMON_LIBRARIES})
 # Link libraries for ASR-LLM-TTS API executable
 target_link_libraries(asr_llm_tts_api ${COMMON_LIBRARIES})
 
+# Link libraries for Register Speaker executable
+target_link_libraries(register_speaker ${COMMON_LIBRARIES})
+
+# Link libraries for List Speakers executable
+target_link_libraries(list_speakers ${COMMON_LIBRARIES})
+
 # Link libraries for Streaming ASR executable
 target_link_libraries(streaming_asr ${COMMON_LIBRARIES})
 
@@ -231,6 +258,11 @@ target_link_directories(asr_llm_tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts_api PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(asr_llm_tts_api PRIVATE ${SNDFILE_LIBRARY_DIRS})
+
+target_link_directories(register_speaker PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
+target_link_directories(register_speaker PRIVATE ${SNDFILE_LIBRARY_DIRS})
+target_link_directories(list_speakers PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
+target_link_directories(list_speakers PRIVATE ${SNDFILE_LIBRARY_DIRS})
 target_link_directories(streaming_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 target_link_directories(streaming_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
 
@@ -250,11 +282,15 @@ target_compile_options(asr_llm_tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts_api PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts_api PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(register_speaker PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(register_speaker PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(list_speakers PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(list_speakers PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
 
 # Set output directory for all executables
-set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr PROPERTIES
+set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr register_speaker list_speakers PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

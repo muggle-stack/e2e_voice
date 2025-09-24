@@ -27,6 +27,13 @@
 - **远场录音支持**：VAD buffer放大100倍，显著提升远场语音检测能力
 - **双声道采样**：支持立体声输入，智能通道混合优化音频质量
 
+### 🔐 说话人识别（新功能）
+- **声纹识别**：基于3D-Speaker CamP+模型的高精度声纹识别
+- **访问控制**：只有注册用户才能使用LLM和TTS功能
+- **多样本注册**：支持多个音频样本提升识别准确率
+- **实时验证**：在ASR后自动进行说话人身份验证
+- **灵活配置**：可调节识别阈值和数据库路径
+
 ## 系统要求
 
 ### 基础环境
@@ -117,6 +124,13 @@ cd ETE_Voice
   --tts_speed 1.0 \
   --tts_type zh
 
+# 启用说话人识别（需要先注册）
+./build/bin/asr_llm_tts \
+  --enable_speaker \
+  --speaker_threshold 0.5 \
+  --speaker_database speakers.db \
+  --device_index 1
+
 # 远场录音优化配置
 ./build/bin/asr_llm_tts \
   --channels 2 \
@@ -149,6 +163,32 @@ cd ETE_Voice
 export API_KEY=YOUR_KEY
 export API_URL=https://api.deepseek.com/chat/completions
 ./build/bin/asr_llm_tts_api --model deepseek-chat
+```
+
+### 🔐 说话人识别
+
+#### 注册说话人
+```bash
+# 使用音频文件注册说话人
+./build/bin/register_speaker -n zhang_san sample1.wav sample2.wav sample3.wav
+
+# 通过麦克风录音注册（会录制3次，每次4秒）
+./build/bin/register_speaker -n zhang_san
+
+# 使用自定义数据库
+./build/bin/register_speaker -d company.db -n employee001 voice.wav
+
+# 强制覆盖已存在的说话人
+./build/bin/register_speaker -f -n zhang_san new_sample.wav
+```
+
+#### 查看已注册说话人
+```bash
+# 列出默认数据库中的说话人
+./build/bin/list_speakers speakers.db
+
+# 列出指定数据库中的说话人
+./build/bin/list_speakers company.db
 ```
 
 ### 🎙️ 语音识别

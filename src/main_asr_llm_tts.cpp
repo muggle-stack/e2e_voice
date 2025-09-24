@@ -50,7 +50,12 @@ public:
         float compression_threshold;
         bool use_rms_norm;
         std::string tts_type;
-        
+
+        // Speaker recognition params
+        bool enable_speaker_recognition;
+        float speaker_threshold;
+        std::string speaker_database;
+
         Params() :
             sample_rate(16000),
             channels(1),
@@ -67,7 +72,10 @@ public:
             compression_ratio(2.0f),
             compression_threshold(0.7f),
             use_rms_norm(true),
-            tts_type("zh") {}
+            tts_type("zh"),
+            enable_speaker_recognition(false),
+            speaker_threshold(0.6f),
+            speaker_database("speakers.db") {}
     };
 
     ASRLLMTTSDemo(const Params& params = Params()) : params_(params) {}
@@ -213,7 +221,10 @@ public:
         recorder_config.trigger_threshold = params_.trigger_threshold;
         recorder_config.stop_threshold = params_.stop_threshold;
         recorder_config.vad_type = params_.vad_type;
-        
+        recorder_config.enable_speaker_recognition = params_.enable_speaker_recognition;
+        recorder_config.speaker_threshold = params_.speaker_threshold;
+        recorder_config.speaker_database = params_.speaker_database;
+
         audio_recorder_ = std::make_unique<AudioRecorder>(recorder_config);
         if (!audio_recorder_->initialize()) {
             std::cerr << "Failed to initialize audio recorder" << std::endl;
@@ -344,7 +355,18 @@ private:
         
         std::cout << "ASR Result: " << asr_result << std::endl;
         std::cout << "ASR Processing time: " << asr_duration << "s" << std::endl;
-        
+
+        // Check if speaker recognition is enabled and speaker is registered
+        if (params_.enable_speaker_recognition) {
+            if (!audio_recorder_->isSpeakerRegistered()) {
+                std::cout << "\n[Speaker Recognition] Speaker not recognized or not registered. Skipping LLM and TTS." << std::endl;
+                std::cout << "Please register your voice using the register_speaker program." << std::endl;
+                return;
+            } else {
+                std::cout << "[Speaker Recognition] Speaker verified: " << audio_recorder_->getLastIdentifiedSpeaker() << std::endl;
+            }
+        }
+
         // 4. Generate LLM response
         std::cout << "\n=== LLM Phase ===" << std::endl;
         std::cout << "Sending to LLM (" << params_.llm_model << ")..." << std::endl;
@@ -699,6 +721,9 @@ void printUsage(const char* program_name) {
     std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.1)" << std::endl;
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
+    std::cout << "  --enable_speaker            Enable speaker recognition (default: disabled)" << std::endl;
+    std::cout << "  --speaker_threshold <value> Speaker recognition threshold (default: 0.6)" << std::endl;
+    std::cout << "  --speaker_database <file>   Speaker database file (default: speakers.db)" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
 }
 
@@ -770,6 +795,15 @@ int main(int argc, char** argv) {
         else if (arg == "--use_peak_norm") {
             params.use_rms_norm = false;
         }
+        else if (arg == "--enable_speaker") {
+            params.enable_speaker_recognition = true;
+        }
+        else if (arg == "--speaker_threshold" && i + 1 < argc) {
+            params.speaker_threshold = std::atof(argv[++i]);
+        }
+        else if (arg == "--speaker_database" && i + 1 < argc) {
+            params.speaker_database = argv[++i];
+        }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             printUsage(argv[0]);
@@ -792,6 +826,13 @@ int main(int argc, char** argv) {
     std::cout << "  LLM model: " << params.llm_model << std::endl;
     std::cout << "  TTS speed: " << params.tts_speed << std::endl;
     std::cout << "  TTS speaker ID: " << params.tts_speaker_id << std::endl;
+    if (params.enable_speaker_recognition) {
+        std::cout << "  Speaker recognition: ENABLED" << std::endl;
+        std::cout << "  Speaker threshold: " << params.speaker_threshold << std::endl;
+        std::cout << "  Speaker database: " << params.speaker_database << std::endl;
+    } else {
+        std::cout << "  Speaker recognition: DISABLED" << std::endl;
+    }
     std::cout << std::endl;
     
     try {
