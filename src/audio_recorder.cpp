@@ -27,6 +27,68 @@ AudioRecorder::~AudioRecorder() {
 
 // ===================== Helpers: resampling =====================
 namespace {
+    constexpr int kDefaultLowpassTaps = 63;
+
+    std::vector<float> designLowpassKernel(int taps, double cutoff_ratio) {
+        if (taps < 3) {
+            taps = 3;
+        }
+        if (taps % 2 == 0) {
+            taps += 1; // 使用奇数阶保持对称
+        }
+
+        std::vector<float> kernel(static_cast<size_t>(taps));
+        int mid = taps / 2;
+
+        for (int n = 0; n < taps; ++n) {
+            double rel = static_cast<double>(n - mid);
+            double value;
+            if (std::abs(rel) < 1e-8) {
+                value = 2.0 * cutoff_ratio;
+            } else {
+                value = std::sin(2.0 * M_PI * cutoff_ratio * rel) / (M_PI * rel);
+            }
+            double window = 0.54 - 0.46 * std::cos(2.0 * M_PI * n / (taps - 1));
+            kernel[static_cast<size_t>(n)] = static_cast<float>(value * window);
+        }
+
+        double sum = 0.0;
+        for (float v : kernel) {
+            sum += v;
+        }
+        if (std::abs(sum) > 1e-12) {
+            for (float& v : kernel) {
+                v = static_cast<float>(v / sum);
+            }
+        }
+
+        return kernel;
+    }
+
+    std::vector<float> applyFIRFilter(const std::vector<float>& input,
+                                      const std::vector<float>& kernel) {
+        if (input.empty() || kernel.empty()) {
+            return input;
+        }
+
+        int taps = static_cast<int>(kernel.size());
+        int half = taps / 2;
+        std::vector<float> output(input.size(), 0.0f);
+
+        for (size_t n = 0; n < input.size(); ++n) {
+            double acc = 0.0;
+            for (int k = 0; k < taps; ++k) {
+                int idx = static_cast<int>(n) + k - half;
+                if (idx >= 0 && idx < static_cast<int>(input.size())) {
+                    acc += input[static_cast<size_t>(idx)] * kernel[static_cast<size_t>(k)];
+                }
+            }
+            output[n] = static_cast<float>(acc);
+        }
+
+        return output;
+    }
+
     // Linear resample a single-channel sequence
     std::vector<float> resampleMono(const std::vector<float>& input,
                                     int input_rate,
@@ -34,21 +96,31 @@ namespace {
         if (input_rate == output_rate || input.empty()) {
             return input;
         }
+        std::vector<float> processed = input;
+
+        if (input_rate > output_rate && input.size() > 1) {
+            double cutoff_ratio = 0.5 * (static_cast<double>(output_rate) / static_cast<double>(input_rate));
+            cutoff_ratio = std::min(cutoff_ratio * 0.9, 0.5);
+            if (cutoff_ratio > 0.0) {
+                auto kernel = designLowpassKernel(kDefaultLowpassTaps, cutoff_ratio);
+                processed = applyFIRFilter(processed, kernel);
+            }
+        }
+
         double ratio = static_cast<double>(input_rate) / static_cast<double>(output_rate);
-        size_t output_length = static_cast<size_t>(std::floor(static_cast<double>(input.size()) / ratio));
-        std::vector<float> output;
-        output.resize(output_length);
+        size_t output_length = static_cast<size_t>(std::floor(static_cast<double>(processed.size()) / ratio));
+        std::vector<float> output(output_length);
 
         for (size_t i = 0; i < output_length; ++i) {
             double src_pos = static_cast<double>(i) * ratio;
             size_t idx = static_cast<size_t>(src_pos);
             double frac = src_pos - static_cast<double>(idx);
-            if (idx + 1 < input.size()) {
-                float a = input[idx];
-                float b = input[idx + 1];
+            if (idx + 1 < processed.size()) {
+                float a = processed[idx];
+                float b = processed[idx + 1];
                 output[i] = static_cast<float>((1.0 - frac) * a + frac * b);
             } else {
-                output[i] = input[idx];
+                output[i] = processed[idx];
             }
         }
         return output;
@@ -205,6 +277,7 @@ void AudioRecorder::processAudioFrame(const float* input, unsigned long frame_co
     // Process audio without holding the lock for the entire duration
     // Convert to vector for easier processing
     std::vector<float> frame(input, input + frame_count * config_.channels);
+    std::vector<float> original_frame = frame;
     
     // First, calculate the signal level to determine amplification needed
     float max_raw_amplitude = 0.0f;
@@ -311,6 +384,11 @@ void AudioRecorder::processAudioFrame(const float* input, unsigned long frame_co
                                     pre_speech_buffer_.begin() + config_.frames_per_buffer * config_.channels);
         }
         pre_speech_buffer_.insert(pre_speech_buffer_.end(), amplified_frame.begin(), amplified_frame.end());
+        if (clean_pre_speech_buffer_.size() > config_.frames_per_buffer * 10 * config_.channels) {
+            clean_pre_speech_buffer_.erase(clean_pre_speech_buffer_.begin(),
+                                           clean_pre_speech_buffer_.begin() + config_.frames_per_buffer * config_.channels);
+        }
+        clean_pre_speech_buffer_.insert(clean_pre_speech_buffer_.end(), original_frame.begin(), original_frame.end());
     }
     
     // Choose VAD method based on configuration
@@ -376,6 +454,8 @@ void AudioRecorder::processAudioFrame(const float* input, unsigned long frame_co
             // Add pre-speech buffer to main buffer
             audio_buffer_.insert(audio_buffer_.end(), 
                                pre_speech_buffer_.begin(), pre_speech_buffer_.end());
+            clean_audio_buffer_.insert(clean_audio_buffer_.end(),
+                                      clean_pre_speech_buffer_.begin(), clean_pre_speech_buffer_.end());
         }
     }
     
@@ -383,6 +463,7 @@ void AudioRecorder::processAudioFrame(const float* input, unsigned long frame_co
         // Store amplified audio for better ASR quality
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         audio_buffer_.insert(audio_buffer_.end(), amplified_frame.begin(), amplified_frame.end());
+        clean_audio_buffer_.insert(clean_audio_buffer_.end(), original_frame.begin(), original_frame.end());
         
         // Check stopping conditions
         auto silence_duration = std::chrono::duration<double>(now - last_speech_time_).count();
@@ -406,7 +487,9 @@ std::vector<float> AudioRecorder::recordAudio() {
 
     // Reset state
     audio_buffer_.clear();
+    clean_audio_buffer_.clear();
     pre_speech_buffer_.clear();
+    clean_pre_speech_buffer_.clear();
     vad_buffer_.clear(); // Clear VAD buffer for new recording
 
     // Reset VAD state counters (for energy VAD)
@@ -447,10 +530,11 @@ std::vector<float> AudioRecorder::recordAudio() {
 #ifdef WITH_SPEAKER_RECOGNITION
     if (config_.enable_speaker_recognition && speaker_embedder_ && speaker_manager_) {
         std::cout << "[Speaker Recognition] Starting identification..." << std::endl;
-        std::cout << "[Speaker Recognition] Audio buffer size: " << audio_buffer_.size()
-                  << " samples (" << (float)audio_buffer_.size() / config_.sample_rate << "s)" << std::endl;
+        const auto& sr_buffer = clean_audio_buffer_.empty() ? audio_buffer_ : clean_audio_buffer_;
+        std::cout << "[Speaker Recognition] Audio buffer size: " << sr_buffer.size()
+                  << " samples (" << static_cast<float>(sr_buffer.size()) / config_.sample_rate << "s)" << std::endl;
 
-        last_identified_speaker_ = identifySpeaker(audio_buffer_);
+        last_identified_speaker_ = identifySpeaker(sr_buffer);
 
         if (!last_identified_speaker_.empty()) {
             std::cout << "[Speaker Recognition] ✓ Identified speaker: " << last_identified_speaker_ << std::endl;

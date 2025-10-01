@@ -87,7 +87,9 @@ private:
     std::atomic<bool> should_stop_;
     
     std::vector<float> audio_buffer_;
+    std::vector<float> clean_audio_buffer_;
     std::vector<float> pre_speech_buffer_;
+    std::vector<float> clean_pre_speech_buffer_;
     std::mutex buffer_mutex_;
     
     std::thread recording_thread_;
