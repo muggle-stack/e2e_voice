@@ -64,7 +64,7 @@ sudo apt update
 sudo apt install gcc-14 g++-14 cmake pkg-config
 
 # 安装音频和网络库
-sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev
+sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev espeak-ng
 
 # 安装ONNX Runtime
 wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz
@@ -78,7 +78,7 @@ sudo ldconfig
 ```bash
 # 安装依赖
 brew install gcc cmake pkg-config
-brew install portaudio libsndfile curl fftw onnxruntime
+brew install portaudio libsndfile curl fftw onnxruntime espeak
 ```
 
 ### 2. 安装Ollama (LLM支持)
