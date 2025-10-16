@@ -8,7 +8,7 @@ TTSDemo::TTSDemo(const Params& params) : params_(params) {}
 
 bool TTSDemo::initialize(){
     tts::TTSModelDownloader tts_downloader;
-    if (!tts_downloader.ensureModelsExist("zh")) {
+    if (!tts_downloader.ensureModelsExist(params_.tts_type)) {
         std::cerr << "Failed to ensure TTS models exist" << std::endl;
         return false;
     }
