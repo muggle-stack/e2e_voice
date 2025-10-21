@@ -1,6 +1,8 @@
 #ifndef ONNX_COMPAT_H_
 #define ONNX_COMPAT_H_
 
+#include <cstdint>
+
 // Platform-specific compatibility fixes for ONNX Runtime
 
 // Fix for platforms without proper __fp16 support (especially RISC-V)
