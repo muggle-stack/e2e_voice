@@ -100,7 +100,7 @@ ollama pull qwen2.5       # 标准模型（可选）
 ```bash
 # 克隆项目
 git clone https://github.com/muggle-stack/ETE_Voice.git
-cd ETE_Voice
+cd e2e_Voice
 
 # 构建
 ./build.sh
