@@ -99,8 +99,8 @@ ollama pull qwen2.5       # Standard model (optional)
 ### 3. Build Project
 ```bash
 # Clone repository
-git clone https://github.com/muggle-stack/ETE_Voice.git
-cd ETE_Voice
+git clone https://github.com/muggle-stack/e2e_Voice.git
+cd e2e_Voice
 
 # Build (default: all local mode)
 ./build.sh
