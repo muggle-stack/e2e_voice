@@ -91,13 +91,15 @@ bool ModelDownloader::downloadFile(const std::string& url, const std::string& ou
     
     DownloadData download_data;
     download_data.progress_cb = progress_cb;
-    
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L); // 不验证对方证书
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L); // 不验证证书中的主机名
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &file);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ASR_CPP/1.0");
-    
+
     if (progress_cb) {
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &download_data);
