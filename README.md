@@ -61,9 +61,11 @@
 sudo apt update
 
 # 安装编译工具
+# Ubuntu 22.04实测 gcc-14 和 g++-14 已取消，用默认 g++ 即可
 sudo apt install gcc-14 g++-14 cmake pkg-config
 
 # 安装音频和网络库
+# Ubuntu 22.04 实测 libportaudio-dev 包名改为 portaudio19-dev
 sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev espeak-ng
 
 # 安装ONNX Runtime
