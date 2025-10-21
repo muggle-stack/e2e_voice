@@ -64,7 +64,7 @@ public:
             max_record_time(5.0),
             trigger_threshold(0.6),
             stop_threshold(0.35),
-            vad_type("energy"),
+            vad_type("silero"),
             llm_model("qwen2.5:0.5b"),
             tts_speed(1.0f),
             tts_speaker_id(0),
@@ -713,7 +713,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --max_record_time <value>   Maximum recording time in seconds (default: 5.0)" << std::endl;
     std::cout << "  --trigger_threshold <value> VAD trigger threshold (default: 0.6)" << std::endl;
     std::cout << "  --stop_threshold <value>    VAD stop threshold (default: 0.35)" << std::endl;
-    std::cout << "  --vad_type <type>           VAD type: 'energy' or 'silero' (default: energy)" << std::endl;
+    std::cout << "  --vad_type <type>           VAD type: 'energy' or 'silero' (default: silero)" << std::endl;
     std::cout << "  --model <model_name>        LLM model name (default: qwen2.5:0.5b)" << std::endl;
     std::cout << "  --tts_speed <value>         TTS speech speed (default: 1.0, >1.0 = slower)" << std::endl;
     std::cout << "  --tts_speaker <value>       TTS speaker ID for multi-speaker models (default: 0)" << std::endl;
