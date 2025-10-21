@@ -5,11 +5,12 @@
 ## 🎯 项目特性
 
 ### 🔊 完整的语音对话链路
-- **ASR (语音识别)**：基于SenseVoice模型的中文语音识别
+- **ASR (语音识别)**：支持本地SenseVoice模型或云端阿里云实时ASR
 - **音频文件处理**：专用于音频文件批量处理的轻量级引擎
-- **LLM (大语言模型)**：集成Ollama支持多种开源模型
+- **LLM (大语言模型)**：支持本地Ollama或云端API（DeepSeek/OpenAI）
 - **TTS (文本转语音)**：基于Matcha-TTS的高质量语音合成，**支持中文和英文**
 - **流式处理**：LLM流式输出+实时TTS播放，自然对话体验
+- **灵活部署**：ASR和LLM模块支持本地/云端自由组合，4种部署模式
 
 ### 🛠️ 技术特性
 - **C++高性能实现**：使用ONNX Runtime进行模型推理
@@ -47,9 +48,10 @@
 - **PortAudio 2.0**：音频录制和播放
 - **libsndfile**：音频文件处理
 - **ONNX Runtime**：AI模型推理
-- **cURL**：模型下载
+- **cURL**：模型下载和云端API通信
 - **FFTW3**：音频信号处理
-- **Ollama**：LLM服务 (可选)
+- **OpenSSL**：云端ASR签名认证（云端模式需要）
+- **Ollama**：本地LLM服务（本地LLM模式需要）
 
 ## 安装指南
 
@@ -66,7 +68,7 @@ sudo apt install gcc-14 g++-14 cmake pkg-config
 
 # 安装音频和网络库
 # Ubuntu 22.04 实测 libportaudio-dev 包名改为 portaudio19-dev
-sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev espeak-ng
+sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev libssl-dev espeak-ng
 
 # 安装ONNX Runtime
 wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz
@@ -80,7 +82,7 @@ sudo ldconfig
 ```bash
 # 安装依赖
 brew install gcc cmake pkg-config
-brew install portaudio libsndfile curl fftw onnxruntime espeak
+brew install portaudio libsndfile curl fftw onnxruntime espeak openssl
 ```
 
 ### 2. 安装Ollama (LLM支持)
@@ -99,19 +101,87 @@ ollama pull qwen2.5       # 标准模型（可选）
 ### 3. 构建项目
 ```bash
 # 克隆项目
-git clone https://github.com/muggle-stack/ETE_Voice.git
+git clone https://github.com/muggle-stack/e2e_Voice.git
 cd e2e_Voice
 
-# 构建
+# 构建（默认全本地模式）
 ./build.sh
+
+# 或者使用云端服务（可选）
+# 云端ASR模式
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON ..
+make -j8
+
+# 云端LLM模式
+cmake -DUSE_CLOUD_LLM=ON ..
+make -j8
+
+# 全云端模式
+cmake -DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON ..
+make -j8
 ```
+
+### 4. 云端服务配置（可选）
+
+#### 阿里云实时ASR配置
+
+如果使用云端ASR（`-DUSE_CLOUD_ASR=ON`），需要配置阿里云密钥：
+
+```bash
+# 1. 复制环境配置文件
+cp .env.example .env
+
+# 2. 编辑 .env 文件，填入真实密钥
+# ALIYUN_ACCESS_KEY_ID=LTAI***************
+# ALIYUN_ACCESS_KEY_SECRET=******************************
+# ALIYUN_ASR_APPKEY=tt43P2u****
+```
+
+**获取密钥**：
+
+1. **获取 AccessKey**：
+   - 访问 https://ram.console.aliyun.com/manage/ak
+   - 点击"创建AccessKey"
+   - 保存 AccessKey ID 和 AccessKey Secret
+
+2. **获取 AppKey**：
+   - 访问 https://nls-portal.console.aliyun.com/
+   - 创建项目，选择"一句话识别"服务
+   - 复制项目的 AppKey
+
+#### 云端LLM API配置
+
+如果使用云端LLM（`-DUSE_CLOUD_LLM=ON`），需要配置API密钥：
+
+```bash
+# 编辑 .env 文件，添加LLM配置
+# API_KEY=sk-***************************
+# API_URL=https://api.deepseek.com/chat/completions
+```
+
+**支持的API**：
+- DeepSeek: https://platform.deepseek.com/api_keys
+- OpenAI: https://platform.openai.com/api-keys
+- 其他兼容OpenAI API的服务
 
 ## 使用说明
 
 ### 🎯 完整对话系统 (推荐)
 
-#### 本地LLM版本 (Ollama)
+**重要说明**：`asr_llm_tts` 现已支持云端ASR和云端LLM集成！通过编译时选项可灵活切换：
+- **默认模式**：本地ASR + 本地Ollama
+- **云端ASR模式** (`-DUSE_CLOUD_ASR=ON`)：阿里云ASR + 本地Ollama
+- **云端LLM模式** (`-DUSE_CLOUD_LLM=ON`)：本地ASR + 云端API（DeepSeek/OpenAI）
+- **全云端模式** (`-DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON`)：阿里云ASR + 云端API
+
+> 💡 `asr_llm_tts_api` 已被集成到 `asr_llm_tts` 中，通过条件编译实现功能统一。
+
+#### 全本地模式（默认）
 ```bash
+# 编译（默认全本地）
+./build.sh
+
 # 查看帮助
 ./build/bin/asr_llm_tts --help
 
@@ -143,7 +213,62 @@ cd e2e_Voice
   --trigger_threshold 0.6
 ```
 
-#### 云端API版本 (DeepSeek/OpenAI)
+#### 云端ASR模式
+```bash
+# 编译云端ASR版本
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON ..
+make -j8
+cd ..
+
+# 配置阿里云密钥（.env文件）
+cp .env.example .env
+# 编辑.env填入：ALIYUN_ACCESS_KEY_ID, ALIYUN_ACCESS_KEY_SECRET, ALIYUN_ASR_APPKEY
+
+# 运行（云端ASR + 本地Ollama）
+./build/bin/asr_llm_tts --model qwen2.5:0.5b
+```
+
+#### 云端LLM模式
+```bash
+# 编译云端LLM版本
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_LLM=ON ..
+make -j8
+cd ..
+
+# 配置云端LLM密钥（.env文件）
+# 编辑.env填入：API_KEY, API_URL
+
+# 运行（本地ASR + 云端API）
+./build/bin/asr_llm_tts --model deepseek-chat --max_tokens 500
+```
+
+#### 全云端模式
+```bash
+# 编译全云端版本
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON ..
+make -j8
+cd ..
+
+# 配置所有云端服务密钥（.env文件）
+# 编辑.env填入：阿里云ASR + 云端LLM配置
+
+# 运行（云端ASR + 云端API）
+./build/bin/asr_llm_tts \
+  --model deepseek-chat \
+  --max_tokens 500 \
+  --device_index 7 \
+  --channels 2 \
+  --tts_type zh
+```
+
+#### 独立云端API程序 (asr_llm_tts_api)
+
+> **注意**：`asr_llm_tts_api` 是独立的云端LLM专用程序，功能已被集成到 `asr_llm_tts` 的云端LLM模式中。
+> 推荐使用 `asr_llm_tts` 配合编译选项，获得更灵活的部署方式。
+
 ```bash
 # 使用DeepSeek API
 ./build/bin/asr_llm_tts_api \
@@ -196,6 +321,30 @@ export API_URL=https://api.deepseek.com/chat/completions
 ```
 
 ### 🎙️ 语音识别
+
+#### 云端实时ASR测试 (新功能)
+```bash
+# 使用.env文件配置（推荐）
+cp .env.example .env
+# 编辑 .env 填入阿里云密钥后直接运行
+./build/bin/asr_realtime_test
+
+# 测试音频文件
+./build/bin/asr_realtime_test --audio_file test.wav
+
+# 自定义录音参数
+./build/bin/asr_realtime_test \
+  --device_index 0 \
+  --sample_rate 16000 \
+  --silence_duration 1.5 \
+  --max_record_time 60 \
+  --vad_type silero
+```
+
+**特性**：
+- 支持任意采样率自动重采样到16kHz
+- 1-2秒低延迟识别
+- 支持本地音频文件和实时录音
 
 #### 实时流式ASR (新功能)
 ```bash
@@ -650,7 +799,22 @@ int main() {
 
 ## 更新日志
 
-### v2.6.0 (当前版本)
+### v3.0.0 (当前版本)
+- ✅ **云端ASR集成**：支持阿里云实时ASR，1-2秒低延迟识别
+- ✅ **云端LLM集成**：支持云端API（DeepSeek/OpenAI）作为LLM后端
+- ✅ **灵活模块化**：ASR和LLM支持本地/云端独立切换，4种部署模式
+- ✅ **条件编译**：通过CMake选项(`USE_CLOUD_ASR`, `USE_CLOUD_LLM`)控制编译
+- ✅ **.env配置支持**：统一配置管理，支持从.env文件读取云端服务密钥
+- ✅ **自动重采样**：ASR API层自动处理任意采样率音频
+- ✅ **云端测试工具**：新增`asr_realtime_test`用于云端ASR功能测试
+
+**部署模式对比**：
+- 全本地: 本地ASR + Ollama (离线可用)
+- 云端ASR: 云端ASR + Ollama (高准确率ASR)
+- 云端LLM: 本地ASR + 云端API (强大LLM能力)
+- 全云端: 云端ASR + 云端API (最高准确率和能力)
+
+### v2.6.0
 - ✅ **声纹识别集成**：新增基于3D-Speaker CamP+模型的声纹识别功能
 - ✅ **访问控制机制**：只有注册用户才能使用LLM和TTS功能
 - ✅ **原始音频链路**：录音阶段保留未裁剪信号并专供声纹推理使用，避免大幅增益导致的特征失真

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(asr_cpp VERSION 1.0.0)
+project(asr_cpp VERSION 3.0.0)
 
 # Use GCC-14 for better RISC-V support if available
 find_program(GCC14 gcc-14)
@@ -87,6 +87,16 @@ if(NOT LibArchive_FOUND)
     message(WARNING "libarchive not found. Using system tar command for extraction.")
 endif()
 
+# Find OpenSSL for HMAC-SHA1 signature (required for cloud ASR)
+find_package(OpenSSL REQUIRED)
+if(OPENSSL_FOUND)
+    message(STATUS "OpenSSL found: ${OPENSSL_VERSION}")
+    message(STATUS "OpenSSL include dir: ${OPENSSL_INCLUDE_DIR}")
+    message(STATUS "OpenSSL libraries: ${OPENSSL_LIBRARIES}")
+else()
+    message(FATAL_ERROR "OpenSSL not found. Please install with: brew install openssl")
+endif()
+
 # Use official cppjieba
 set(JIEBA_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/cppjieba/include)
 set(JIEBA_DEPS_DIR ${CMAKE_SOURCE_DIR}/third_party/cppjieba/deps)
@@ -98,6 +108,7 @@ include_directories(${ONNXRUNTIME_INCLUDE_DIR})
 include_directories(${PORTAUDIO_INCLUDE_DIRS})
 include_directories(${SNDFILE_INCLUDE_DIRS})
 include_directories(${FFTW3_INCLUDE_DIRS})
+include_directories(${OPENSSL_INCLUDE_DIR})
 if(LibArchive_FOUND)
     include_directories(${LibArchive_INCLUDE_DIRS})
 endif()
@@ -114,6 +125,11 @@ set(COMMON_SOURCES
     src/audio_processor.cpp
     src/tokenizer.cpp
     src/model_downloader.cpp
+)
+
+# Realtime ASR API source (one-sentence recognition)
+set(ASR_REALTIME_API_SOURCES
+    src/asr_realtime_api.cpp
 )
 
 # Speaker Recognition sources
@@ -161,10 +177,26 @@ add_executable(asr_correct ${ASR_CORRECT_SOURCES})
 set(ASR_FC_SOURCES ${COMMON_SOURCES} src/main_fc.cpp)
 add_executable(asr_fc ${ASR_FC_SOURCES})
 
+# Options for cloud services (before defining executables)
+option(USE_CLOUD_ASR "Use cloud ASR service instead of local model" OFF)
+option(USE_CLOUD_LLM "Use cloud LLM API instead of local Ollama" OFF)
+
 # ASR-LLM-TTS executable (with speaker recognition)
 set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/main_asr_llm_tts.cpp)
+if(USE_CLOUD_ASR)
+    list(APPEND ASR_LLM_TTS_SOURCES src/asr_realtime_api.cpp)
+endif()
+if(USE_CLOUD_LLM)
+    list(APPEND ASR_LLM_TTS_SOURCES src/api_comm.cpp)
+endif()
 add_executable(asr_llm_tts ${ASR_LLM_TTS_SOURCES})
 target_compile_definitions(asr_llm_tts PRIVATE WITH_SPEAKER_RECOGNITION)
+if(USE_CLOUD_ASR)
+    target_compile_definitions(asr_llm_tts PRIVATE USE_CLOUD_ASR)
+endif()
+if(USE_CLOUD_LLM)
+    target_compile_definitions(asr_llm_tts PRIVATE USE_CLOUD_LLM)
+endif()
 
 # ASR-LLM-TTS API executable
 set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp src/main_asr_llm_tts_api.cpp)
@@ -188,6 +220,15 @@ add_executable(tts ${TTS_STANDALONE_SOURCES})
 set(STREAMING_ASR_SOURCES ${COMMON_SOURCES} src/streaming_audio_recorder.cpp src/asr_thread_pool.cpp src/main_streaming_asr.cpp)
 add_executable(streaming_asr ${STREAMING_ASR_SOURCES})
 
+# ASR Realtime Test executable (one-sentence recognition with AudioRecorder)
+set(ASR_REALTIME_TEST_SOURCES
+    ${ASR_REALTIME_API_SOURCES}
+    src/audio_recorder.cpp
+    src/vad_detector.cpp
+    src/model_downloader.cpp
+    src/main_asr_realtime_test.cpp)
+add_executable(asr_realtime_test ${ASR_REALTIME_TEST_SOURCES})
+
 # Common libraries
 if(APPLE)
     set(COMMON_LIBRARIES
@@ -196,6 +237,18 @@ if(APPLE)
         ${SNDFILE_LIBRARIES}
         ${CURL_LIBRARIES}
         ${FFTW3_LIBRARIES}
+        ${OPENSSL_LIBRARIES}
+        pthread
+    )
+    # Simplified libraries for API test programs (no audio I/O needed)
+    # (Currently unused, kept for potential future simple test programs)
+    # Libraries for realtime test (needs audio recording + VAD)
+    set(REALTIME_TEST_LIBRARIES
+        /opt/homebrew/lib/libportaudio.dylib
+        /opt/homebrew/lib/libsndfile.dylib
+        ${ONNXRUNTIME_LIB}
+        ${CURL_LIBRARIES}
+        ${OPENSSL_LIBRARIES}
         pthread
     )
 else()
@@ -205,6 +258,16 @@ else()
         ${SNDFILE_LIBRARIES}
         ${CURL_LIBRARIES}
         ${FFTW3_LIBRARIES}
+        ${OPENSSL_LIBRARIES}
+        pthread
+    )
+    # Libraries for realtime test (needs audio recording + VAD)
+    set(REALTIME_TEST_LIBRARIES
+        ${PORTAUDIO_LIBRARIES}
+        ${SNDFILE_LIBRARIES}
+        ${ONNXRUNTIME_LIB}
+        ${CURL_LIBRARIES}
+        ${OPENSSL_LIBRARIES}
         pthread
     )
 endif()
@@ -240,6 +303,9 @@ target_link_libraries(list_speakers ${COMMON_LIBRARIES})
 
 # Link libraries for Streaming ASR executable
 target_link_libraries(streaming_asr ${COMMON_LIBRARIES})
+
+# Link libraries for ASR Realtime Test executable (needs AudioRecorder+VAD)
+target_link_libraries(asr_realtime_test ${REALTIME_TEST_LIBRARIES})
 
 # Add library search paths for all executables
 target_link_directories(asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
@@ -288,9 +354,10 @@ target_compile_options(list_speakers PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(list_speakers PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(streaming_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(asr_realtime_test PRIVATE ${SNDFILE_CFLAGS_OTHER})
 
 # Set output directory for all executables
-set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr register_speaker list_speakers PROPERTIES
+set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr register_speaker list_speakers asr_realtime_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

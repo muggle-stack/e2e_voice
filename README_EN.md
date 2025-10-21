@@ -5,11 +5,12 @@ A complete Chinese intelligent voice dialogue system integrating Automatic Speec
 ## 🎯 Project Features
 
 ### 🔊 Complete Voice Dialogue Pipeline
-- **ASR (Speech Recognition)**: Chinese speech recognition based on SenseVoice model
+- **ASR (Speech Recognition)**: Support for local SenseVoice model or cloud-based Aliyun real-time ASR
 - **Audio File Processing**: Lightweight engine dedicated to batch processing of audio files
-- **LLM (Large Language Models)**: Integration with Ollama supporting various open-source models
+- **LLM (Large Language Models)**: Support for local Ollama or cloud APIs (DeepSeek/OpenAI)
 - **TTS (Text-to-Speech)**: High-quality speech synthesis based on Matcha-TTS, **supporting Chinese and English**
 - **Streaming Processing**: LLM streaming output + real-time TTS playback for natural dialogue experience
+- **Flexible Deployment**: ASR and LLM modules support local/cloud combinations, 4 deployment modes
 
 ### 🛠️ Technical Features
 - **C++ High Performance Implementation**: Using ONNX Runtime for model inference
@@ -47,9 +48,10 @@ A complete Chinese intelligent voice dialogue system integrating Automatic Speec
 - **PortAudio 2.0**: Audio recording and playback
 - **libsndfile**: Audio file processing
 - **ONNX Runtime**: AI model inference
-- **cURL**: Model downloading
+- **cURL**: Model downloading and cloud API communication
 - **FFTW3**: Audio signal processing
-- **Ollama**: LLM service (optional)
+- **OpenSSL**: Cloud ASR signature authentication (required for cloud mode)
+- **Ollama**: Local LLM service (required for local LLM mode)
 
 ## Installation Guide
 
@@ -64,7 +66,7 @@ sudo apt update
 sudo apt install gcc-14 g++-14 cmake pkg-config
 
 # Install audio and network libraries
-sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev
+sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev libssl-dev espeak-ng
 
 # Install ONNX Runtime
 wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz
@@ -78,7 +80,7 @@ sudo ldconfig
 ```bash
 # Install dependencies
 brew install gcc cmake pkg-config
-brew install portaudio libsndfile curl fftw onnxruntime
+brew install portaudio libsndfile curl fftw onnxruntime espeak openssl
 ```
 
 ### 2. Install Ollama (LLM Support)
@@ -100,16 +102,84 @@ ollama pull qwen2.5       # Standard model (optional)
 git clone https://github.com/muggle-stack/ETE_Voice.git
 cd ETE_Voice
 
-# Build
+# Build (default: all local mode)
 ./build.sh
+
+# Or use cloud services (optional)
+# Cloud ASR mode
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON ..
+make -j8
+
+# Cloud LLM mode
+cmake -DUSE_CLOUD_LLM=ON ..
+make -j8
+
+# Full cloud mode
+cmake -DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON ..
+make -j8
 ```
+
+### 4. Cloud Service Configuration (Optional)
+
+#### Aliyun Real-time ASR Configuration
+
+If using cloud ASR (`-DUSE_CLOUD_ASR=ON`), you need to configure Aliyun credentials:
+
+```bash
+# 1. Copy environment configuration file
+cp .env.example .env
+
+# 2. Edit .env file and fill in real credentials
+# ALIYUN_ACCESS_KEY_ID=LTAI***************
+# ALIYUN_ACCESS_KEY_SECRET=******************************
+# ALIYUN_ASR_APPKEY=tt43P2u****
+```
+
+**Get Credentials**:
+
+1.  **Get AccessKey**:
+    * Visit https://ram.console.aliyun.com/manage/ak
+    * Click "Create AccessKey"
+    * Save the AccessKey ID and AccessKey Secret
+
+2.  **Get AppKey**:
+    * Visit https://nls-portal.console.aliyun.com/
+    * Create a project and select the "Short Sentence Recognition" service.
+    * Copy the project's AppKey.
+
+#### Cloud LLM API Configuration
+
+If using cloud LLM (`-DUSE_CLOUD_LLM=ON`), you need to configure API keys:
+
+```bash
+# Edit .env file and add LLM configuration
+# API_KEY=sk-***************************
+# API_URL=https://api.deepseek.com/chat/completions
+```
+
+**Supported APIs**:
+- DeepSeek: https://platform.deepseek.com/api_keys
+- OpenAI: https://platform.openai.com/api-keys
+- Other OpenAI-compatible services
 
 ## Usage Instructions
 
 ### 🎯 Complete Dialogue System (Recommended)
 
-#### Local LLM Version (Ollama)
+**Important**: `asr_llm_tts` now supports cloud ASR and cloud LLM integration! Flexible switching via compile-time options:
+- **Default Mode**: Local ASR + Local Ollama
+- **Cloud ASR Mode** (`-DUSE_CLOUD_ASR=ON`): Aliyun ASR + Local Ollama
+- **Cloud LLM Mode** (`-DUSE_CLOUD_LLM=ON`): Local ASR + Cloud API (DeepSeek/OpenAI)
+- **Full Cloud Mode** (`-DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON`): Aliyun ASR + Cloud API
+
+> 💡 `asr_llm_tts_api` has been integrated into `asr_llm_tts` through conditional compilation for unified functionality.
+
+#### Full Local Mode (Default)
 ```bash
+# Build (default: all local)
+./build.sh
+
 # View help
 ./build/bin/asr_llm_tts --help
 
@@ -141,7 +211,62 @@ cd ETE_Voice
   --trigger_threshold 0.6
 ```
 
-#### Cloud API Version (DeepSeek/OpenAI)
+#### Cloud ASR Mode
+```bash
+# Build cloud ASR version
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON ..
+make -j8
+cd ..
+
+# Configure Aliyun credentials (.env file)
+cp .env.example .env
+# Edit .env and fill in: ALIYUN_ACCESS_KEY_ID, ALIYUN_ACCESS_KEY_SECRET, ALIYUN_ASR_APPKEY
+
+# Run (Cloud ASR + Local Ollama)
+./build/bin/asr_llm_tts --model qwen2.5:0.5b
+```
+
+#### Cloud LLM Mode
+```bash
+# Build cloud LLM version
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_LLM=ON ..
+make -j8
+cd ..
+
+# Configure cloud LLM credentials (.env file)
+# Edit .env and fill in: API_KEY, API_URL
+
+# Run (Local ASR + Cloud API)
+./build/bin/asr_llm_tts --model deepseek-chat --max_tokens 500
+```
+
+#### Full Cloud Mode
+```bash
+# Build full cloud version
+mkdir -p build && cd build
+cmake -DUSE_CLOUD_ASR=ON -DUSE_CLOUD_LLM=ON ..
+make -j8
+cd ..
+
+# Configure all cloud service credentials (.env file)
+# Edit .env and fill in: Aliyun ASR + Cloud LLM configuration
+
+# Run (Cloud ASR + Cloud API)
+./build/bin/asr_llm_tts \
+  --model deepseek-chat \
+  --max_tokens 500 \
+  --device_index 7 \
+  --channels 2 \
+  --tts_type zh
+```
+
+#### Standalone Cloud API Program (asr_llm_tts_api)
+
+> **Note**: `asr_llm_tts_api` is a standalone cloud LLM-only program. Its functionality has been integrated into `asr_llm_tts` cloud LLM mode.
+> We recommend using `asr_llm_tts` with compile options for more flexible deployment.
+
 ```bash
 # Use DeepSeek API
 ./build/bin/asr_llm_tts_api \
@@ -194,6 +319,30 @@ export API_URL=https://api.deepseek.com/chat/completions
 ```
 
 ### 🎙️ Speech Recognition
+
+#### Cloud Real-time ASR Testing (New Feature)
+```bash
+# Use .env file configuration (recommended)
+cp .env.example .env
+# Edit .env with Aliyun credentials and run directly
+./build/bin/asr_realtime_test
+
+# Test audio file
+./build/bin/asr_realtime_test --audio_file test.wav
+
+# Custom recording parameters
+./build/bin/asr_realtime_test \
+  --device_index 0 \
+  --sample_rate 16000 \
+  --silence_duration 1.5 \
+  --max_record_time 60 \
+  --vad_type energy
+```
+
+**Features**:
+- Support for automatic resampling of any sample rate to 16kHz
+- 1-2 second low-latency recognition
+- Support for local audio files and real-time recording
 
 #### Streaming ASR (New Feature)
 ```bash
@@ -649,7 +798,22 @@ Welcome to submit Issues and Pull Requests!
 
 ## Changelog
 
-### v2.6.0 (Current Version)
+### v3.0.0 (Current Version)
+- ✅ **Cloud ASR Integration**: Support Aliyun real-time ASR with 1-2 second low-latency recognition
+- ✅ **Cloud LLM Integration**: Support cloud APIs (DeepSeek/OpenAI) as LLM backend
+- ✅ **Flexible Modular Architecture**: ASR and LLM support independent local/cloud switching, 4 deployment modes
+- ✅ **Conditional Compilation**: Control compilation via CMake options (`USE_CLOUD_ASR`, `USE_CLOUD_LLM`)
+- ✅ **.env Configuration Support**: Unified configuration management, support reading cloud service credentials from .env file
+- ✅ **Automatic Resampling**: ASR API layer automatically handles audio of any sample rate
+- ✅ **Cloud Testing Tool**: Added `asr_realtime_test` for cloud ASR functionality testing
+
+**Deployment Mode Comparison**:
+- All Local: Local ASR + Ollama (offline available)
+- Cloud ASR: Cloud ASR + Ollama (high accuracy ASR)
+- Cloud LLM: Local ASR + Cloud API (powerful LLM capability)
+- All Cloud: Cloud ASR + Cloud API (highest accuracy and capability)
+
+### v2.6.0
 - ✅ **Speaker Recognition Integration**: Added speaker recognition functionality based on 3D-Speaker CamP+ model
 - ✅ **Access Control Mechanism**: Only registered users can use LLM and TTS functions
 - ✅ **Raw Audio Path**: Preserve unclipped raw waveform dedicated to speaker embedding inference

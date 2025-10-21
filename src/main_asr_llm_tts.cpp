@@ -18,9 +18,19 @@
 
 #include "audio_recorder.hpp"
 #include "vad_detector.hpp"
-#include "asr_model.hpp"
+#ifdef USE_CLOUD_ASR
+    #include "asr_realtime_api.hpp"
+    using ASREngine = ASRRealtimeClient;
+#else
+    #include "asr_model.hpp"
+    using ASREngine = ASRModel;
+#endif
 #include "model_downloader.hpp"
-#include "ollama.hpp"
+#ifdef USE_CLOUD_LLM
+    #include "api_comm.hpp"
+#else
+    #include "ollama.hpp"
+#endif
 #include "tts/tts_model.hpp"
 #include "tts/tts_model_downloader.hpp"
 #include "text_buffer.hpp"
@@ -41,6 +51,12 @@ public:
         
         // LLM params
         std::string llm_model;
+        int max_tokens;
+
+        // API params (for cloud LLM)
+        std::string api_key;
+        std::string api_url;
+        std::string env_file;
         
         // TTS params
         float tts_speed;
@@ -65,7 +81,14 @@ public:
             trigger_threshold(0.6),
             stop_threshold(0.35),
             vad_type("silero"),
+#ifdef USE_CLOUD_LLM
+            llm_model("deepseek-chat"),
+            max_tokens(500),
+            env_file(".env"),
+#else
             llm_model("qwen2.5:0.5b"),
+            max_tokens(100),
+#endif
             tts_speed(1.0f),
             tts_speaker_id(0),
             target_rms(0.15f),
@@ -90,7 +113,57 @@ public:
 
     bool initialize() {
         std::cout << "Initializing ASR-LLM-TTS Demo..." << std::endl;
-        
+
+#ifdef USE_CLOUD_LLM
+        // Configure cloud LLM API
+        if (!params_.api_key.empty()) {
+            api_comm::setApiKey(params_.api_key);
+            std::cout << "API key set from command line" << std::endl;
+        }
+
+        if (!params_.api_url.empty()) {
+            api_comm::setApiUrl(params_.api_url);
+            std::cout << "API URL set from command line: " << params_.api_url << std::endl;
+        }
+
+        // Try to load from .env file
+        if (api_comm::loadConfigFromEnv(params_.env_file)) {
+            std::cout << "API configuration loaded from " << params_.env_file << std::endl;
+        }
+
+        // Try environment variables as fallback
+        if (!api_comm::getClient().isConfigured()) {
+            const char* env_key = std::getenv("API_KEY");
+            if (!env_key) env_key = std::getenv("OPENAI_API_KEY");
+            if (!env_key) env_key = std::getenv("DEEPSEEK_API_KEY");
+
+            if (env_key) {
+                api_comm::setApiKey(env_key);
+                std::cout << "API key loaded from environment variable" << std::endl;
+            }
+
+            const char* env_url = std::getenv("API_URL");
+            if (env_url) {
+                api_comm::setApiUrl(env_url);
+                std::cout << "API URL loaded from environment variable" << std::endl;
+            }
+        }
+
+        if (!api_comm::getClient().isConfigured()) {
+            std::cerr << "Error: API not configured. Please set API key and URL via:" << std::endl;
+            std::cerr << "  1. Command line: --api_key YOUR_KEY --api_url YOUR_URL" << std::endl;
+            std::cerr << "  2. Environment variables: export API_KEY=YOUR_KEY API_URL=YOUR_URL" << std::endl;
+            std::cerr << "  3. .env file: API_KEY=YOUR_KEY and API_URL=YOUR_URL" << std::endl;
+            std::cerr << "\nSupported APIs (use corresponding URL):" << std::endl;
+            std::cerr << "  - DeepSeek: https://api.deepseek.com/chat/completions" << std::endl;
+            std::cerr << "  - OpenAI: https://api.openai.com/v1/chat/completions" << std::endl;
+            std::cerr << "  - Local: http://localhost:8000/v1/chat/completions" << std::endl;
+            return false;
+        }
+
+        std::cout << "API configured successfully (" << api_comm::getClient().getApiProvider() << ")" << std::endl;
+        std::cout << "Using model: " << params_.llm_model << std::endl;
+#else
         // Check if Ollama server is running
         if (!ollama::is_running()) {
             std::cerr << "Error: Ollama server is not running. Please start ollama service first." << std::endl;
@@ -98,7 +171,7 @@ public:
             return false;
         }
         std::cout << "Ollama server is running (version: " << ollama::get_version() << ")" << std::endl;
-        
+
         // Check if the specified model is available
         std::vector<std::string> models = ollama::list_models();
         bool model_found = false;
@@ -108,7 +181,7 @@ public:
                 break;
             }
         }
-        
+
         if (!model_found) {
             std::cout << "Model '" << params_.llm_model << "' not found locally. Attempting to pull..." << std::endl;
             if (!ollama::pull_model(params_.llm_model)) {
@@ -121,6 +194,7 @@ public:
         } else {
             std::cout << "Using existing model: " << params_.llm_model << std::endl;
         }
+#endif
         
         // Download ASR models if needed
         ModelDownloader downloader;
@@ -155,6 +229,15 @@ public:
         }
         
         // Initialize ASR model
+#ifdef USE_CLOUD_ASR
+        // 云端 ASR 配置
+        ASRRealtimeClient::Config asr_config;
+        // 从环境变量自动加载配置（TOKEN 或 AccessKey）
+        asr_config.sample_rate = 16000;
+
+        asr_model_ = std::make_unique<ASRRealtimeClient>(asr_config);
+#else
+        // 本地 ASR 配置
         ASRModel::Config asr_config;
         asr_config.model_path = downloader.getModelPath(ModelDownloader::ASR_MODEL_QUANT_NAME);
         asr_config.config_path = downloader.getModelPath(ModelDownloader::CONFIG_NAME);
@@ -164,8 +247,10 @@ public:
         asr_config.language = "zh";
         asr_config.use_itn = true;
         asr_config.quantized = true;
-        
+
         asr_model_ = std::make_unique<ASRModel>(asr_config);
+#endif
+
         if (!asr_model_->initialize()) {
             std::cerr << "Failed to initialize ASR model" << std::endl;
             return false;
@@ -369,72 +454,139 @@ private:
 
         // 4. Generate LLM response
         std::cout << "\n=== LLM Phase ===" << std::endl;
+#ifdef USE_CLOUD_LLM
+        std::cout << "Sending to " << api_comm::getClient().getApiProvider()
+                  << " (" << params_.llm_model << ")..." << std::endl;
+#else
         std::cout << "Sending to LLM (" << params_.llm_model << ")..." << std::endl;
-        
+#endif
+
         // 重置音频队列顺序（每次新对话）
         audio_queue_->resetOrder();
-        
+
         std::string llm_response;
         try {
             start_time = std::chrono::high_resolution_clock::now();
-            
-            // Set reasonable options for the LLM
+
+#ifdef USE_CLOUD_LLM
+            // Cloud LLM API options
+            api_comm::Options options;
+            options.temperature = 0.7f;
+            options.max_tokens = params_.max_tokens;
+            options.stream = true;
+#else
+            // Local Ollama options
             ollama::options options;
             options["temperature"] = 0.7;
-            options["max_tokens"] = 100;  // Keep response shorter for TTS
-            
+            options["max_tokens"] = params_.max_tokens;
+#endif
+
             // Use streaming generation with text buffer
             TextBuffer text_buffer;
             std::vector<std::string> processed_sentences;
             size_t sentence_order = 0;  // 句子顺序计数器
-            
+
             std::cout << "LLM Response: " << std::flush;
-            
-            // Create streaming callback function like in main_llm.cpp
+
+            // Create streaming callback function
             bool stream_finished = false;
-            auto stream_callback = [&](const ollama::response& response) -> bool {
+
+#ifdef USE_CLOUD_LLM
+            auto stream_callback = [&](const api_comm::Response& response) -> bool {
+                // Check if this is the final response (for cloud API)
+                if (response.raw_json.contains("done") && response.raw_json["done"] == true) {
+                    stream_finished = true;
+                    std::cout << std::endl;
+
+                    // Process any remaining text in buffer as final sentence
+                    text_buffer.addText("。");
+                    while (text_buffer.hasSentence()) {
+                        std::string sentence = text_buffer.getNextSentence();
+                        if (!sentence.empty()) {
+                            processed_sentences.push_back(sentence);
+                            size_t current_order = sentence_order++;
+
+                            #if defined(__riscv) || defined(__riscv__)
+                            enqueueTTSTask(sentence, current_order);
+                            #else
+                            std::thread([this, sentence, current_order]() {
+                                generateAndEnqueueOrderedTTS(sentence, current_order);
+                            }).detach();
+                            #endif
+                        }
+                    }
+                    return false;
+                }
+
                 // Add text chunk to buffer
-                std::string chunk = response.as_simple_string();
+                std::string chunk = response.content;
                 std::cout << chunk << std::flush;
                 text_buffer.addText(chunk);
-                
+
                 // Process any complete sentences immediately
                 while (text_buffer.hasSentence()) {
                     std::string sentence = text_buffer.getNextSentence();
                     if (!sentence.empty()) {
                         processed_sentences.push_back(sentence);
-                        
-                        // 为每个句子分配顺序号，确保按顺序播放
                         size_t current_order = sentence_order++;
-                        
-                        // Limit concurrent threads on RISC-V to prevent overload
+
                         #if defined(__riscv) || defined(__riscv__)
-                        // On RISC-V, enqueue to worker thread to avoid blocking LLM
                         enqueueTTSTask(sentence, current_order);
                         #else
-                        // On other platforms, use threads for parallel processing
                         std::thread([this, sentence, current_order]() {
                             generateAndEnqueueOrderedTTS(sentence, current_order);
                         }).detach();
                         #endif
                     }
                 }
-                
+
+                return !stream_finished;
+            };
+
+            // Use streaming generation (cloud API)
+            bool success = api_comm::generate(params_.llm_model, asr_result, stream_callback, options);
+            if (!success) {
+                std::cerr << "\nFailed to generate response from API" << std::endl;
+                return;
+            }
+#else
+            auto stream_callback = [&](const ollama::response& response) -> bool {
+                // Add text chunk to buffer
+                std::string chunk = response.as_simple_string();
+                std::cout << chunk << std::flush;
+                text_buffer.addText(chunk);
+
+                // Process any complete sentences immediately
+                while (text_buffer.hasSentence()) {
+                    std::string sentence = text_buffer.getNextSentence();
+                    if (!sentence.empty()) {
+                        processed_sentences.push_back(sentence);
+                        size_t current_order = sentence_order++;
+
+                        #if defined(__riscv) || defined(__riscv__)
+                        enqueueTTSTask(sentence, current_order);
+                        #else
+                        std::thread([this, sentence, current_order]() {
+                            generateAndEnqueueOrderedTTS(sentence, current_order);
+                        }).detach();
+                        #endif
+                    }
+                }
+
                 // Check if this is the final response
                 if (response.as_json()["done"] == true) {
                     stream_finished = true;
                     std::cout << std::endl;
-                    
+
                     // Process any remaining text in buffer as final sentence
-                    text_buffer.addText("。"); // Add period to force final sentence
+                    text_buffer.addText("。");
                     while (text_buffer.hasSentence()) {
                         std::string sentence = text_buffer.getNextSentence();
                         if (!sentence.empty()) {
                             processed_sentences.push_back(sentence);
                             size_t current_order = sentence_order++;
-                            
+
                             #if defined(__riscv) || defined(__riscv__)
-                            // On RISC-V, enqueue to worker thread
                             enqueueTTSTask(sentence, current_order);
                             #else
                             std::thread([this, sentence, current_order]() {
@@ -444,12 +596,13 @@ private:
                         }
                     }
                 }
-                
+
                 return !stream_finished;
             };
-            
-            // Use streaming generation
+
+            // Use streaming generation (local Ollama)
             ollama::generate(params_.llm_model, asr_result, stream_callback, options);
+#endif
             
             // Combine all sentences for final display
             llm_response = "";
@@ -631,7 +784,7 @@ private:
     }
     std::unique_ptr<AudioRecorder> audio_recorder_;
     std::unique_ptr<VADDetector> vad_detector_;
-    std::unique_ptr<ASRModel> asr_model_;
+    std::unique_ptr<ASREngine> asr_model_;
     std::unique_ptr<tts::TTSModel> tts_model_;
     std::unique_ptr<OrderedAudioQueue> audio_queue_;
     Params params_;

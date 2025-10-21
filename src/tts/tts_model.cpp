@@ -140,8 +140,7 @@ std::vector<float> vocoderInference(Ort::Session& session, const std::vector<flo
     auto vocoder_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
     int32_t batch_size = vocoder_shape[0];
     int32_t n_fft_bins = vocoder_shape[1];  // 513 = (1024/2 + 1) for n_fft=1024
-    int32_t vocoder_frames = vocoder_shape[2];
-    
+    int32_t vocoder_frames = vocoder_shape[2];    
     
     // Reconstruct complex STFT from magnitude and phase components
     // Follow sherpa-onnx layout: (num_frames, n_fft/2+1)
