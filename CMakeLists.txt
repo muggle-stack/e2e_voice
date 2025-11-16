@@ -159,22 +159,22 @@ set(TTS_SOURCES
 )
 
 # VAD+ASR executable
-set(VAD_ASR_SOURCES ${COMMON_SOURCES} src/main_asr.cpp)
+set(VAD_ASR_SOURCES ${COMMON_SOURCES} example/main_asr.cpp)
 add_executable(vad_asr ${VAD_ASR_SOURCES})
 
 # ASR executable (file processing)
-set(ASR_SOURCES ${ASE_SOURCES} src/main_ase.cpp)
+set(ASR_SOURCES ${ASE_SOURCES} example/main_ase.cpp)
 add_executable(asr ${ASR_SOURCES})
 
 # ASR-LLM executable
-set(ASR_LLM_SOURCES ${COMMON_SOURCES} src/main_llm.cpp)
+set(ASR_LLM_SOURCES ${COMMON_SOURCES} example/main_llm.cpp)
 add_executable(asr_llm ${ASR_LLM_SOURCES})
 
 # ASR-Correct executable (ASR with error correction)
-set(ASR_CORRECT_SOURCES ${COMMON_SOURCES} src/main_asr_correct.cpp)
+set(ASR_CORRECT_SOURCES ${COMMON_SOURCES} example/main_asr_correct.cpp)
 add_executable(asr_correct ${ASR_CORRECT_SOURCES})
 
-set(ASR_FC_SOURCES ${COMMON_SOURCES} src/main_fc.cpp)
+set(ASR_FC_SOURCES ${COMMON_SOURCES} example/main_fc.cpp)
 add_executable(asr_fc ${ASR_FC_SOURCES})
 
 # Options for cloud services (before defining executables)
@@ -182,7 +182,7 @@ option(USE_CLOUD_ASR "Use cloud ASR service instead of local model" OFF)
 option(USE_CLOUD_LLM "Use cloud LLM API instead of local Ollama" OFF)
 
 # ASR-LLM-TTS executable (with speaker recognition)
-set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/main_asr_llm_tts.cpp)
+set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp example/main_asr_llm_tts.cpp)
 if(USE_CLOUD_ASR)
     list(APPEND ASR_LLM_TTS_SOURCES src/asr_realtime_api.cpp)
 endif()
@@ -199,7 +199,7 @@ if(USE_CLOUD_LLM)
 endif()
 
 # ASR-LLM-TTS API executable
-set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp src/main_asr_llm_tts_api.cpp)
+set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp example/main_asr_llm_tts_api.cpp)
 add_executable(asr_llm_tts_api ${ASR_LLM_TTS_API_SOURCES})
 
 # Register Speaker executable (with speaker recognition)
@@ -213,11 +213,11 @@ add_executable(list_speakers ${LIST_SPEAKERS_SOURCES})
 target_compile_definitions(list_speakers PRIVATE WITH_SPEAKER_RECOGNITION)
 
 # TTS executable (standalone)
-set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} src/main_tts.cpp)
+set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} example/main_tts.cpp)
 add_executable(tts ${TTS_STANDALONE_SOURCES})
 
 # Streaming ASR executable
-set(STREAMING_ASR_SOURCES ${COMMON_SOURCES} src/streaming_audio_recorder.cpp src/asr_thread_pool.cpp src/main_streaming_asr.cpp)
+set(STREAMING_ASR_SOURCES ${COMMON_SOURCES} src/streaming_audio_recorder.cpp src/asr_thread_pool.cpp example/main_streaming_asr.cpp)
 add_executable(streaming_asr ${STREAMING_ASR_SOURCES})
 
 # ASR Realtime Test executable (one-sentence recognition with AudioRecorder)
@@ -226,7 +226,7 @@ set(ASR_REALTIME_TEST_SOURCES
     src/audio_recorder.cpp
     src/vad_detector.cpp
     src/model_downloader.cpp
-    src/main_asr_realtime_test.cpp)
+    example/main_asr_realtime_test.cpp)
 add_executable(asr_realtime_test ${ASR_REALTIME_TEST_SOURCES})
 
 # Common libraries
