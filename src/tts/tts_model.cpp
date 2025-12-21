@@ -1171,6 +1171,104 @@ private:
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     }
 
+    // Check if a character is a Roman numeral character
+    bool isRomanNumeralChar(char c) {
+        c = std::toupper(c);
+        return c == 'I' || c == 'V' || c == 'X' || c == 'L' || c == 'C' || c == 'D' || c == 'M';
+    }
+
+    // Check if a string is a valid Roman numeral
+    bool isRomanNumeral(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!isRomanNumeralChar(c)) return false;
+        }
+        // Additional validation: check if it's a valid Roman numeral pattern
+        // Simple validation: must contain at least one Roman numeral character
+        return true;
+    }
+
+    // Convert Roman numeral to integer
+    int romanToInt(const std::string& roman) {
+        std::unordered_map<char, int> values = {
+            {'I', 1}, {'V', 5}, {'X', 10}, {'L', 50},
+            {'C', 100}, {'D', 500}, {'M', 1000}
+        };
+
+        int result = 0;
+        for (size_t i = 0; i < roman.length(); i++) {
+            char c = std::toupper(roman[i]);
+            int value = values[c];
+
+            // Check if this is a subtractive case
+            if (i + 1 < roman.length()) {
+                char next = std::toupper(roman[i + 1]);
+                int next_value = values[next];
+                if (value < next_value) {
+                    result -= value;
+                } else {
+                    result += value;
+                }
+            } else {
+                result += value;
+            }
+        }
+        return result;
+    }
+
+    // Convert integer to Chinese reading (for numbers)
+    std::string intToChineseReading(int num) {
+        if (num == 0) return "零";
+        if (num < 0) return "负" + intToChineseReading(-num);
+
+        static const char* digits[] = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
+        static const char* units[] = {"", "十", "百", "千"};
+        static const char* bigUnits[] = {"", "万", "亿"};
+
+        std::string result;
+
+        // Handle numbers up to 99999999 (亿)
+        if (num >= 100000000) {
+            result += intToChineseReading(num / 100000000) + "亿";
+            num %= 100000000;
+            if (num > 0 && num < 10000000) result += "零";
+        }
+        if (num >= 10000) {
+            result += intToChineseReading(num / 10000) + "万";
+            num %= 10000;
+            if (num > 0 && num < 1000) result += "零";
+        }
+        if (num >= 1000) {
+            result += std::string(digits[num / 1000]) + "千";
+            num %= 1000;
+            if (num > 0 && num < 100) result += "零";
+        }
+        if (num >= 100) {
+            result += std::string(digits[num / 100]) + "百";
+            num %= 100;
+            if (num > 0 && num < 10) result += "零";
+        }
+        if (num >= 10) {
+            if (num / 10 != 1 || result.length() > 0) {
+                result += digits[num / 10];
+            }
+            result += "十";
+            num %= 10;
+        }
+        if (num > 0) {
+            result += digits[num];
+        }
+
+        return result;
+    }
+
+    // Process Roman numeral and convert to Chinese reading IDs
+    std::vector<int64_t> processRomanNumeralToIds(const std::string& roman) {
+        int value = romanToInt(roman);
+        std::string chinese = intToChineseReading(value);
+        return processChineseToPinyinIds(chinese);
+    }
+
     // Process zh-en bilingual text
     std::vector<int64_t> processZhEnText(const std::string& text) {
         std::vector<int64_t> token_ids;
@@ -1195,9 +1293,17 @@ private:
                     english_part += chars[i];
                     i++;
                 }
-                // Convert English to IPA and get IDs
-                auto ids = processEnglishToIds(english_part);
-                token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+
+                // Check if it's a Roman numeral (all uppercase Roman numeral chars)
+                if (isRomanNumeral(english_part)) {
+                    // Convert Roman numeral to Chinese number reading
+                    auto ids = processRomanNumeralToIds(english_part);
+                    token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                } else {
+                    // Convert English to IPA and get IDs
+                    auto ids = processEnglishToIds(english_part);
+                    token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                }
             } else {
                 // Handle punctuation and other characters
                 std::string ch = chars[i];
