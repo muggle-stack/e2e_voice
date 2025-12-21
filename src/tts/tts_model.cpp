@@ -87,7 +87,7 @@ std::unordered_map<std::string, int64_t> readTokenToIdMap(const std::string& pat
     return token_to_id;
 }
 
-// Read tokens to ID mapping for zh-en model (line number + 1 = ID)
+// Read tokens to ID mapping for zh-en model (line number = ID, 1-indexed)
 std::unordered_map<std::string, int64_t> readZhEnTokenToIdMap(const std::string& path) {
     std::unordered_map<std::string, int64_t> token_to_id;
     std::ifstream file(path);
@@ -99,14 +99,20 @@ std::unordered_map<std::string, int64_t> readZhEnTokenToIdMap(const std::string&
     int line_num = 0;
     while (std::getline(file, line)) {
         line_num++;
+        // For zh-en model: line number = token ID (1-indexed)
+        // Handle special case: line with only a space character
+        if (line == " ") {
+            token_to_id[" "] = line_num;
+            continue;
+        }
+
         if (!line.empty()) {
-            // For zh-en model: line number + 1 = token ID (1-indexed)
-            // Trim whitespace
+            // Trim whitespace for normal tokens
             size_t start = line.find_first_not_of(" \t\r\n");
             size_t end = line.find_last_not_of(" \t\r\n");
             if (start != std::string::npos && end != std::string::npos) {
                 std::string token = line.substr(start, end - start + 1);
-                token_to_id[token] = line_num;  // 1-indexed
+                token_to_id[token] = line_num;
             }
         }
     }
@@ -1224,51 +1230,6 @@ private:
         }
     }
 
-    // Check if a character is a Roman numeral character
-    bool isRomanNumeralChar(char c) {
-        c = std::toupper(c);
-        return c == 'I' || c == 'V' || c == 'X' || c == 'L' || c == 'C' || c == 'D' || c == 'M';
-    }
-
-    // Check if a string is a valid Roman numeral
-    bool isRomanNumeral(const std::string& str) {
-        if (str.empty()) return false;
-        for (char c : str) {
-            if (!isRomanNumeralChar(c)) return false;
-        }
-        // Additional validation: check if it's a valid Roman numeral pattern
-        // Simple validation: must contain at least one Roman numeral character
-        return true;
-    }
-
-    // Convert Roman numeral to integer
-    int romanToInt(const std::string& roman) {
-        std::unordered_map<char, int> values = {
-            {'I', 1}, {'V', 5}, {'X', 10}, {'L', 50},
-            {'C', 100}, {'D', 500}, {'M', 1000}
-        };
-
-        int result = 0;
-        for (size_t i = 0; i < roman.length(); i++) {
-            char c = std::toupper(roman[i]);
-            int value = values[c];
-
-            // Check if this is a subtractive case
-            if (i + 1 < roman.length()) {
-                char next = std::toupper(roman[i + 1]);
-                int next_value = values[next];
-                if (value < next_value) {
-                    result -= value;
-                } else {
-                    result += value;
-                }
-            } else {
-                result += value;
-            }
-        }
-        return result;
-    }
-
     // Convert integer to Chinese reading (for numbers)
     std::string intToChineseReading(long long num) {
         if (num == 0) return "零";
@@ -1318,6 +1279,49 @@ private:
         return result;
     }
 
+    // Check if a character is a Roman numeral character
+    bool isRomanNumeralChar(char c) {
+        c = std::toupper(c);
+        return c == 'I' || c == 'V' || c == 'X' || c == 'L' || c == 'C' || c == 'D' || c == 'M';
+    }
+
+    // Check if a string is a valid Roman numeral (must be >= 2 characters)
+    bool isRomanNumeral(const std::string& str) {
+        // Require at least 2 characters to avoid treating single letters like "I" as Roman numerals
+        if (str.length() < 2) return false;
+        for (char c : str) {
+            if (!isRomanNumeralChar(c)) return false;
+        }
+        return true;
+    }
+
+    // Convert Roman numeral to integer
+    int romanToInt(const std::string& roman) {
+        std::unordered_map<char, int> values = {
+            {'I', 1}, {'V', 5}, {'X', 10}, {'L', 50},
+            {'C', 100}, {'D', 500}, {'M', 1000}
+        };
+
+        int result = 0;
+        for (size_t i = 0; i < roman.length(); i++) {
+            char c = std::toupper(roman[i]);
+            int value = values[c];
+
+            if (i + 1 < roman.length()) {
+                char next = std::toupper(roman[i + 1]);
+                int next_value = values[next];
+                if (value < next_value) {
+                    result -= value;
+                } else {
+                    result += value;
+                }
+            } else {
+                result += value;
+            }
+        }
+        return result;
+    }
+
     // Process Roman numeral and convert to Chinese reading IDs
     std::vector<int64_t> processRomanNumeralToIds(const std::string& roman) {
         int value = romanToInt(roman);
@@ -1343,22 +1347,61 @@ private:
                 auto ids = processChineseToPinyinIds(chinese_part);
                 token_ids.insert(token_ids.end(), ids.begin(), ids.end());
             } else if (isEnglishLetter(chars[i])) {
-                // Collect consecutive English letters
+                // Collect consecutive English words and spaces as a phrase
+                // But check each word for Roman numerals
                 std::string english_part;
-                while (i < chars.size() && isEnglishLetter(chars[i])) {
-                    english_part += chars[i];
-                    i++;
+                while (i < chars.size()) {
+                    if (isEnglishLetter(chars[i])) {
+                        english_part += chars[i];
+                        i++;
+                    } else if (chars[i] == " ") {
+                        // Include spaces in English phrase
+                        english_part += chars[i];
+                        i++;
+                    } else {
+                        // Stop at Chinese characters, digits, or punctuation
+                        break;
+                    }
+                }
+                // Trim trailing spaces
+                while (!english_part.empty() && english_part.back() == ' ') {
+                    english_part.pop_back();
                 }
 
-                // Check if it's a Roman numeral (all uppercase Roman numeral chars)
-                if (isRomanNumeral(english_part)) {
-                    // Convert Roman numeral to Chinese number reading
-                    auto ids = processRomanNumeralToIds(english_part);
-                    token_ids.insert(token_ids.end(), ids.begin(), ids.end());
-                } else {
-                    // Convert English to IPA and get IDs
-                    auto ids = processEnglishToIds(english_part);
-                    token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                // Process the English phrase, grouping consecutive non-Roman words together
+                if (!english_part.empty()) {
+                    std::istringstream iss(english_part);
+                    std::string word;
+                    std::vector<std::string> words;
+                    while (iss >> word) {
+                        words.push_back(word);
+                    }
+
+                    std::string non_roman_buffer;
+                    for (size_t w = 0; w < words.size(); ++w) {
+                        if (isRomanNumeral(words[w])) {
+                            // First, flush any buffered non-Roman words
+                            if (!non_roman_buffer.empty()) {
+                                auto ids = processEnglishToIds(non_roman_buffer);
+                                token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                                non_roman_buffer.clear();
+                            }
+                            // Process Roman numeral
+                            auto ids = processRomanNumeralToIds(words[w]);
+                            token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                        } else {
+                            // Add to buffer (with space if not first)
+                            if (!non_roman_buffer.empty()) {
+                                non_roman_buffer += " ";
+                            }
+                            non_roman_buffer += words[w];
+                        }
+                    }
+                    // Flush remaining non-Roman words
+                    if (!non_roman_buffer.empty()) {
+                        auto ids = processEnglishToIds(non_roman_buffer);
+                        token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+                    }
                 }
             } else if (isDigit(chars[i])) {
                 // Collect consecutive digits (including decimal point for numbers like 3.14)
@@ -1456,8 +1499,7 @@ private:
             if (it != token_to_id_.end()) {
                 ids.push_back(it->second);
             } else {
-                // Default to 1 for unknown tokens
-                ids.push_back(1);
+                // Skip unknown tokens silently
             }
         }
 
@@ -1478,8 +1520,8 @@ private:
             pos += 5;
         }
         
-        // Use espeak-ng to convert text to IPA phonemes
-        std::string command = "echo '" + escaped_text + "' | espeak-ng -q --ipa=3";
+        // Use espeak-ng to convert text to IPA phonemes (use en-us for American English)
+        std::string command = "echo '" + escaped_text + "' | espeak-ng -q --ipa=3 -v en-us";
         
         // Set espeak-ng data directory if available
         if (!config_.data_dir.empty() && std::filesystem::exists(config_.data_dir)) {

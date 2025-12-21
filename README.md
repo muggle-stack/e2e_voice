@@ -549,12 +549,12 @@ include/
 ### TTS模型 (Matcha)
 - **模型路径**：`~/.cache/matcha-tts/`
 - **中文TTS模型**：`matcha-icefall-zh-baker/`
-  - `model-steps-3.onnx` - 中文声学模型
+  - `model-steps=6.onnx` - 中文声学模型
   - `lexicon.txt` - 中文发音词典
   - `tokens.txt` - 中文音素标记
   - `dict/` - 中文词典目录
 - **英文TTS模型**：`matcha-icefall-en_US-ljspeech/`
-  - `model-steps-3.onnx` - 英文声学模型
+  - `model-steps=6.onnx` - 英文声学模型
   - `tokens.txt` - 英文音素标记
   - `espeak-ng-data/` - 英文发音数据
 - **共享声码器**：`vocos-22khz-univ.onnx` - 通用声码器模型

@@ -548,12 +548,12 @@ Recording buffer → Feature extraction → Streaming output → TextBuffer → 
 ### TTS Model (Matcha)
 - **Model Path**: `~/.cache/matcha-tts/`
 - **Chinese TTS Model**: `matcha-icefall-zh-baker/`
-  - `model-steps-3.onnx` - Chinese acoustic model
+  - `model-steps=6.onnx` - Chinese acoustic model
   - `lexicon.txt` - Chinese pronunciation dictionary
   - `tokens.txt` - Chinese phoneme markers
   - `dict/` - Chinese dictionary directory
 - **English TTS Model**: `matcha-icefall-en_US-ljspeech/`
-  - `model-steps-3.onnx` - English acoustic model
+  - `model-steps=6.onnx` - English acoustic model
   - `tokens.txt` - English phoneme markers
   - `espeak-ng-data/` - English pronunciation data
 - **Shared Vocoder**: `vocos-22khz-univ.onnx` - Universal vocoder model

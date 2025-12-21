@@ -273,7 +273,7 @@ public:
         } else if (params_.tts_type == "zh-en") {
             // zh-en bilingual configuration (local model)
             // Model is in project directory, not cache
-            tts_config.acoustic_model_path = "matchatts-zh-en/model-steps-6.onnx";
+            tts_config.acoustic_model_path = "matchatts-zh-en/model-steps=6.onnx";
             tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER_16K);
             tts_config.tokens_path = "matchatts-zh-en/vocab_tts.txt";
             tts_config.language = "zh-en";

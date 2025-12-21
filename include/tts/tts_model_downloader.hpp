@@ -9,18 +9,18 @@ namespace tts {
 class TTSModelDownloader {
 public:
     // Model file names
-    static constexpr const char* MATCHA_ZH_MODEL = "matcha-icefall-zh-baker/model-steps-3.onnx";
+    static constexpr const char* MATCHA_ZH_MODEL = "matcha-icefall-zh-baker/model-steps=6.onnx";
     static constexpr const char* MATCHA_ZH_LEXICON = "matcha-icefall-zh-baker/lexicon.txt";
     static constexpr const char* MATCHA_ZH_TOKENS = "matcha-icefall-zh-baker/tokens.txt";
     static constexpr const char* MATCHA_ZH_DICT_DIR = "matcha-icefall-zh-baker/dict";
-    static constexpr const char* MATCHA_EN_MODEL = "matcha-icefall-en_US-ljspeech/model-steps-3.onnx";
+    static constexpr const char* MATCHA_EN_MODEL = "matcha-icefall-en_US-ljspeech/model-steps=6.onnx";
     static constexpr const char* MATCHA_EN_TOKENS = "matcha-icefall-en_US-ljspeech/tokens.txt";
     static constexpr const char* MATCHA_EN_DATA_DIR = "matcha-icefall-en_US-ljspeech/espeak-ng-data";
     static constexpr const char* VOCOS_VOCODER = "vocos-22khz-univ.onnx";
     static constexpr const char* VOCOS_VOCODER_16K = "vocos-16khz-univ.onnx";
 
     // zh-en bilingual model (local path, not downloaded)
-    static constexpr const char* MATCHA_ZH_EN_MODEL = "matchatts-zh-en/model-steps-6.onnx";
+    static constexpr const char* MATCHA_ZH_EN_MODEL = "matchatts-zh-en/model-steps=6.onnx";
     static constexpr const char* MATCHA_ZH_EN_TOKENS = "matchatts-zh-en/vocab_tts.txt";
     
     TTSModelDownloader();
