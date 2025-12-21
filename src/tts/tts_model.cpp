@@ -1171,6 +1171,59 @@ private:
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     }
 
+    // Check if a character is a digit
+    bool isDigit(const std::string& ch) {
+        if (ch.length() != 1) return false;
+        char c = ch[0];
+        return c >= '0' && c <= '9';
+    }
+
+    // Process Arabic numerals and convert to Chinese reading IDs
+    std::vector<int64_t> processArabicNumeralToIds(const std::string& numStr) {
+        // Handle decimal numbers
+        size_t dotPos = numStr.find('.');
+        if (dotPos != std::string::npos) {
+            // Has decimal point
+            std::string intPart = numStr.substr(0, dotPos);
+            std::string decPart = numStr.substr(dotPos + 1);
+
+            std::string chinese;
+            if (!intPart.empty()) {
+                long long intVal = std::stoll(intPart);
+                chinese = intToChineseReading(intVal);
+            } else {
+                chinese = "零";
+            }
+            chinese += "点";
+
+            // Read decimal digits one by one
+            static const char* digits[] = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
+            for (char c : decPart) {
+                if (c >= '0' && c <= '9') {
+                    chinese += digits[c - '0'];
+                }
+            }
+            return processChineseToPinyinIds(chinese);
+        } else {
+            // Integer
+            try {
+                long long value = std::stoll(numStr);
+                std::string chinese = intToChineseReading(value);
+                return processChineseToPinyinIds(chinese);
+            } catch (...) {
+                // If number is too large, read digit by digit
+                static const char* digits[] = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
+                std::string chinese;
+                for (char c : numStr) {
+                    if (c >= '0' && c <= '9') {
+                        chinese += digits[c - '0'];
+                    }
+                }
+                return processChineseToPinyinIds(chinese);
+            }
+        }
+    }
+
     // Check if a character is a Roman numeral character
     bool isRomanNumeralChar(char c) {
         c = std::toupper(c);
@@ -1217,43 +1270,46 @@ private:
     }
 
     // Convert integer to Chinese reading (for numbers)
-    std::string intToChineseReading(int num) {
+    std::string intToChineseReading(long long num) {
         if (num == 0) return "零";
         if (num < 0) return "负" + intToChineseReading(-num);
 
         static const char* digits[] = {"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"};
-        static const char* units[] = {"", "十", "百", "千"};
-        static const char* bigUnits[] = {"", "万", "亿"};
 
         std::string result;
 
-        // Handle numbers up to 99999999 (亿)
-        if (num >= 100000000) {
-            result += intToChineseReading(num / 100000000) + "亿";
-            num %= 100000000;
-            if (num > 0 && num < 10000000) result += "零";
+        // Handle numbers up to 万亿 (trillion)
+        if (num >= 1000000000000LL) {
+            result += intToChineseReading(num / 1000000000000LL) + "万亿";
+            num %= 1000000000000LL;
+            if (num > 0 && num < 100000000000LL) result += "零";
         }
-        if (num >= 10000) {
-            result += intToChineseReading(num / 10000) + "万";
-            num %= 10000;
-            if (num > 0 && num < 1000) result += "零";
+        if (num >= 100000000LL) {
+            result += intToChineseReading(num / 100000000LL) + "亿";
+            num %= 100000000LL;
+            if (num > 0 && num < 10000000LL) result += "零";
         }
-        if (num >= 1000) {
-            result += std::string(digits[num / 1000]) + "千";
-            num %= 1000;
-            if (num > 0 && num < 100) result += "零";
+        if (num >= 10000LL) {
+            result += intToChineseReading(num / 10000LL) + "万";
+            num %= 10000LL;
+            if (num > 0 && num < 1000LL) result += "零";
         }
-        if (num >= 100) {
-            result += std::string(digits[num / 100]) + "百";
-            num %= 100;
-            if (num > 0 && num < 10) result += "零";
+        if (num >= 1000LL) {
+            result += std::string(digits[num / 1000LL]) + "千";
+            num %= 1000LL;
+            if (num > 0 && num < 100LL) result += "零";
         }
-        if (num >= 10) {
-            if (num / 10 != 1 || result.length() > 0) {
-                result += digits[num / 10];
+        if (num >= 100LL) {
+            result += std::string(digits[num / 100LL]) + "百";
+            num %= 100LL;
+            if (num > 0 && num < 10LL) result += "零";
+        }
+        if (num >= 10LL) {
+            if (num / 10LL != 1 || result.length() > 0) {
+                result += digits[num / 10LL];
             }
             result += "十";
-            num %= 10;
+            num %= 10LL;
         }
         if (num > 0) {
             result += digits[num];
@@ -1304,6 +1360,16 @@ private:
                     auto ids = processEnglishToIds(english_part);
                     token_ids.insert(token_ids.end(), ids.begin(), ids.end());
                 }
+            } else if (isDigit(chars[i])) {
+                // Collect consecutive digits (including decimal point for numbers like 3.14)
+                std::string num_part;
+                while (i < chars.size() && (isDigit(chars[i]) || chars[i] == ".")) {
+                    num_part += chars[i];
+                    i++;
+                }
+                // Convert Arabic numeral to Chinese reading
+                auto ids = processArabicNumeralToIds(num_part);
+                token_ids.insert(token_ids.end(), ids.begin(), ids.end());
             } else {
                 // Handle punctuation and other characters
                 std::string ch = chars[i];
