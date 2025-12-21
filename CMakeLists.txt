@@ -102,6 +102,11 @@ set(JIEBA_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/cppjieba/include)
 set(JIEBA_DEPS_DIR ${CMAKE_SOURCE_DIR}/third_party/cppjieba/deps)
 set(JIEBA_DICT_DIR ${CMAKE_SOURCE_DIR}/third_party/cppjieba/dict)
 
+# Use cpp-pinyin for Chinese to Pinyin conversion (zh-en TTS)
+set(CPP_PINYIN_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-pinyin/include)
+set(CPP_PINYIN_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-pinyin/src)
+set(CPP_PINYIN_DICT_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-pinyin/res/dict)
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${ONNXRUNTIME_INCLUDE_DIR})
@@ -115,6 +120,12 @@ endif()
 if(JIEBA_INCLUDE_DIR)
     include_directories(${JIEBA_INCLUDE_DIR})
     include_directories(${JIEBA_DEPS_DIR}/limonp/include)
+endif()
+if(CPP_PINYIN_INCLUDE_DIR)
+    include_directories(${CPP_PINYIN_INCLUDE_DIR})
+    include_directories(${CPP_PINYIN_SRC_DIR})
+    include_directories(${CPP_PINYIN_SRC_DIR}/toneUtil)
+    add_definitions(-DCPP_PINYIN_STATIC)
 endif()
 
 # Common source files (shared between both executables)
@@ -158,6 +169,19 @@ set(TTS_SOURCES
     src/tts_demo.cpp
 )
 
+# cpp-pinyin source files (for zh-en TTS)
+set(CPP_PINYIN_SOURCES
+    ${CPP_PINYIN_SRC_DIR}/ChineseG2p.cpp
+    ${CPP_PINYIN_SRC_DIR}/DictUtil.cpp
+    ${CPP_PINYIN_SRC_DIR}/G2pglobal.cpp
+    ${CPP_PINYIN_SRC_DIR}/Pinyin.cpp
+    ${CPP_PINYIN_SRC_DIR}/PinyinRes.cpp
+    ${CPP_PINYIN_SRC_DIR}/ToneConverter.cpp
+    ${CPP_PINYIN_SRC_DIR}/U16Str.cpp
+    ${CPP_PINYIN_SRC_DIR}/toneUtil/ManTone.cpp
+    ${CPP_PINYIN_SRC_DIR}/toneUtil/ManToneUtil.cpp
+)
+
 # VAD+ASR executable
 set(VAD_ASR_SOURCES ${COMMON_SOURCES} example/main_asr.cpp)
 add_executable(vad_asr ${VAD_ASR_SOURCES})
@@ -182,7 +206,7 @@ option(USE_CLOUD_ASR "Use cloud ASR service instead of local model" OFF)
 option(USE_CLOUD_LLM "Use cloud LLM API instead of local Ollama" OFF)
 
 # ASR-LLM-TTS executable (with speaker recognition)
-set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp example/main_asr_llm_tts.cpp)
+set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} ${CPP_PINYIN_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp example/main_asr_llm_tts.cpp)
 if(USE_CLOUD_ASR)
     list(APPEND ASR_LLM_TTS_SOURCES src/asr_realtime_api.cpp)
 endif()
@@ -199,7 +223,7 @@ if(USE_CLOUD_LLM)
 endif()
 
 # ASR-LLM-TTS API executable
-set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp example/main_asr_llm_tts_api.cpp)
+set(ASR_LLM_TTS_API_SOURCES ${COMMON_SOURCES} ${TTS_SOURCES} ${CPP_PINYIN_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp src/api_comm.cpp example/main_asr_llm_tts_api.cpp)
 add_executable(asr_llm_tts_api ${ASR_LLM_TTS_API_SOURCES})
 
 # Register Speaker executable (with speaker recognition)
@@ -213,7 +237,7 @@ add_executable(list_speakers ${LIST_SPEAKERS_SOURCES})
 target_compile_definitions(list_speakers PRIVATE WITH_SPEAKER_RECOGNITION)
 
 # TTS executable (standalone)
-set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} example/main_tts.cpp)
+set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} ${CPP_PINYIN_SOURCES} example/main_tts.cpp)
 add_executable(tts ${TTS_STANDALONE_SOURCES})
 
 # Streaming ASR executable

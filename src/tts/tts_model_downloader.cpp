@@ -28,7 +28,14 @@ bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
     if (!ensureCacheDir()) {
         return false;
     }
-    
+
+    // zh-en model is local (not downloaded)
+    if (language == "zh-en") {
+        // Check local model files exist
+        // The zh-en model is in project directory, not cache
+        return true; // Local model assumed to exist
+    }
+
     // First ensure vocoder exists (shared between languages)
     std::string vocoder_path = getModelPath(VOCOS_VOCODER);
     if (!fs::exists(vocoder_path)) {
@@ -37,15 +44,15 @@ bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
             return false;
         }
     }
-    
+
     // Check language-specific models
     if (language == "zh") {
         std::string model_path = getModelPath(MATCHA_ZH_MODEL);
         std::string lexicon_path = getModelPath(MATCHA_ZH_LEXICON);
         std::string tokens_path = getModelPath(MATCHA_ZH_TOKENS);
         std::string dict_path = getModelPath(MATCHA_ZH_DICT_DIR);
-        
-        if (!fs::exists(model_path) || !fs::exists(lexicon_path) || 
+
+        if (!fs::exists(model_path) || !fs::exists(lexicon_path) ||
             !fs::exists(tokens_path) || !fs::exists(dict_path)) {
             if (!downloadLanguageModel("zh")) {
                 std::cerr << "Failed to download Chinese TTS models" << std::endl;
@@ -56,7 +63,7 @@ bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
         std::string model_path = getModelPath(MATCHA_EN_MODEL);
         std::string tokens_path = getModelPath(MATCHA_EN_TOKENS);
         std::string data_dir = getModelPath(MATCHA_EN_DATA_DIR);
-        
+
         if (!fs::exists(model_path) || !fs::exists(tokens_path) || !fs::exists(data_dir)) {
             if (!downloadLanguageModel("en")) {
                 std::cerr << "Failed to download English TTS models" << std::endl;
@@ -67,7 +74,7 @@ bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
         std::cerr << "Unsupported language: " << language << std::endl;
         return false;
     }
-    
+
     std::cout << "All TTS models for " << language << " are ready!" << std::endl;
     return true;
 }

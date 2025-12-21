@@ -27,6 +27,10 @@
 // Jieba for Chinese text segmentation
 #include "cppjieba/Jieba.hpp"
 
+// cpp-pinyin for Chinese to Pinyin conversion (zh-en bilingual model)
+#include <cpp-pinyin/Pinyin.h>
+#include <cpp-pinyin/G2pglobal.h>
+
 namespace fs = std::filesystem;
 
 namespace tts {
@@ -60,7 +64,7 @@ std::unordered_map<std::string, int64_t> readTokenToIdMap(const std::string& pat
     if (!file) {
         throw std::runtime_error("Failed to open tokens file: " + path);
     }
-    
+
     std::string line;
     int line_num = 0;
     while (std::getline(file, line)) {
@@ -69,7 +73,7 @@ std::unordered_map<std::string, int64_t> readTokenToIdMap(const std::string& pat
             std::istringstream iss(line);
             std::string token;
             int64_t id;
-            
+
             if (iss >> token >> id) {
                 // Format: "token_name token_id"
                 token_to_id[token] = id;
@@ -79,8 +83,83 @@ std::unordered_map<std::string, int64_t> readTokenToIdMap(const std::string& pat
             }
         }
     }
-    
+
     return token_to_id;
+}
+
+// Read tokens to ID mapping for zh-en model (line number + 1 = ID)
+std::unordered_map<std::string, int64_t> readZhEnTokenToIdMap(const std::string& path) {
+    std::unordered_map<std::string, int64_t> token_to_id;
+    std::ifstream file(path);
+    if (!file) {
+        throw std::runtime_error("Failed to open tokens file: " + path);
+    }
+
+    std::string line;
+    int line_num = 0;
+    while (std::getline(file, line)) {
+        line_num++;
+        if (!line.empty()) {
+            // For zh-en model: line number + 1 = token ID (1-indexed)
+            // Trim whitespace
+            size_t start = line.find_first_not_of(" \t\r\n");
+            size_t end = line.find_last_not_of(" \t\r\n");
+            if (start != std::string::npos && end != std::string::npos) {
+                std::string token = line.substr(start, end - start + 1);
+                token_to_id[token] = line_num;  // 1-indexed
+            }
+        }
+    }
+
+    return token_to_id;
+}
+
+// Convert IPA to gruut en-us format for zh-en model
+std::string convertToGruutEnUs(const std::string& ipa) {
+    std::string text = ipa;
+
+    // First, remove zero-width joiner (U+200D) that espeak-ng sometimes adds
+    {
+        std::string zwj = "\xe2\x80\x8d";  // Zero-width joiner UTF-8
+        size_t pos = 0;
+        while ((pos = text.find(zwj, pos)) != std::string::npos) {
+            text.erase(pos, zwj.length());
+        }
+    }
+
+    // R-colored vowels (standard IPA -> Gruut US decomposed)
+    std::vector<std::pair<std::string, std::string>> replacements = {
+        {"ɝ", "ɜɹ"},   // nurse
+        {"ɚ", "əɹ"},   // letter
+
+        // Diphthongs (diphthong -> single uppercase letter)
+        // Must process longer patterns first
+        {"eɪ", "A"},   // face
+        {"aɪ", "I"},   // price
+        {"ɔɪ", "Y"},   // choice
+        {"oʊ", "O"},   // goat (American)
+        {"əʊ", "O"},   // goat (British compatibility)
+        {"ɛʊ", "O"},   // goat variant
+        {"aʊ", "W"},   // mouth
+
+        // Affricates
+        {"tʃ", "ʧ"},   // cheese
+        {"dʒ", "ʤ"},   // joy
+
+        // Consonant normalization
+        {"g", "ɡ"},    // Standard g -> Script g (U+0261)
+        {"r", "ɹ"},    // Standard r -> Turned r (U+0279)
+    };
+
+    for (const auto& rep : replacements) {
+        size_t pos = 0;
+        while ((pos = text.find(rep.first, pos)) != std::string::npos) {
+            text.replace(pos, rep.first.length(), rep.second);
+            pos += rep.second.length();
+        }
+    }
+
+    return text;
 }
 
 // Read lexicon from file
@@ -462,12 +541,16 @@ public:
             
             // Load acoustic model
             acoustic_model_ = std::make_unique<Ort::Session>(*env_, config_.acoustic_model_path.c_str(), session_options);
-            
+
             // Load vocoder model
             vocoder_model_ = std::make_unique<Ort::Session>(*env_, config_.vocoder_path.c_str(), session_options);
-            
-            // Load token to ID mapping
-            token_to_id_ = readTokenToIdMap(config_.tokens_path);
+
+            // Load token to ID mapping (different format for zh-en model)
+            if (config_.language == "zh-en") {
+                token_to_id_ = readZhEnTokenToIdMap(config_.tokens_path);
+            } else {
+                token_to_id_ = readTokenToIdMap(config_.tokens_path);
+            }
             
             // Load lexicon (only for Chinese or if lexicon file exists)
             if (config_.language == "zh" && !config_.lexicon_path.empty()) {
@@ -478,7 +561,7 @@ public:
                 }
             } else if (config_.language == "en") {
                 std::cout << "Info: English mode - lexicon not required." << std::endl;
-                
+
                 // Check if espeak-ng is available for English TTS
                 if (!checkEspeakNgAvailable()) {
                     std::cerr << "Error: espeak-ng is required for English TTS but not available." << std::endl;
@@ -486,6 +569,23 @@ public:
                     throw std::runtime_error("espeak-ng not available for English TTS");
                 }
                 std::cout << "Info: espeak-ng found and available for English TTS." << std::endl;
+            } else if (config_.language == "zh-en") {
+                std::cout << "Info: zh-en bilingual mode - using cpp-pinyin for Chinese and espeak-ng for English." << std::endl;
+
+                // Check if espeak-ng is available for English parts
+                if (!checkEspeakNgAvailable()) {
+                    std::cerr << "Error: espeak-ng is required for zh-en TTS but not available." << std::endl;
+                    std::cerr << "Please install espeak-ng using: brew install espeak-ng (macOS) or apt-get install espeak-ng (Linux)" << std::endl;
+                    throw std::runtime_error("espeak-ng not available for zh-en TTS");
+                }
+
+                // Initialize cpp-pinyin
+                try {
+                    initializePinyin();
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Failed to initialize cpp-pinyin: " << e.what() << std::endl;
+                    throw std::runtime_error("cpp-pinyin initialization failed for zh-en TTS");
+                }
             }
             
             // Initialize Jieba for Chinese
@@ -531,12 +631,18 @@ public:
             audio.sample_rate = config_.sample_rate;
             return audio;
         }
-        
+
         // Add blank tokens between phonemes (Matcha requirement)
-        std::vector<int64_t> tokens_with_blanks = addBlankTokens(token_ids);
-        
+        // Note: zh-en model does NOT use blank tokens
+        std::vector<int64_t> final_tokens;
+        if (config_.language == "zh-en") {
+            final_tokens = token_ids;  // No blank tokens for zh-en model
+        } else {
+            final_tokens = addBlankTokens(token_ids);
+        }
+
         // Run acoustic model
-        std::vector<float> mel = runAcousticModel(tokens_with_blanks, speaker_id, speed);
+        std::vector<float> mel = runAcousticModel(final_tokens, speaker_id, speed);
         
         if (mel.empty()) {
             GeneratedAudio audio;
@@ -660,7 +766,40 @@ private:
         jieba_ = std::make_unique<cppjieba::Jieba>(
             dict_path, hmm_path, user_dict, idf_path, stop_words
         );
-        
+
+    }
+
+    void initializePinyin() {
+        // Initialize cpp-pinyin dictionary path
+        // Try multiple possible locations
+        std::vector<std::string> possible_paths = {
+            "../third_party/cpp-pinyin/res/dict",
+            "../../third_party/cpp-pinyin/res/dict",
+            "../../../third_party/cpp-pinyin/res/dict",
+            "third_party/cpp-pinyin/res/dict",
+            "/Users/mugglepro/workspace/e2e_Voice/third_party/cpp-pinyin/res/dict"
+        };
+
+        std::string pinyin_dict_dir;
+        for (const auto& path : possible_paths) {
+            if (fs::exists(path + "/mandarin")) {
+                pinyin_dict_dir = path;
+                std::cout << "Found cpp-pinyin dictionary at: " << pinyin_dict_dir << std::endl;
+                break;
+            }
+        }
+
+        if (pinyin_dict_dir.empty()) {
+            throw std::runtime_error("Cannot find cpp-pinyin dictionary. Please check third_party/cpp-pinyin/res/dict.");
+        }
+
+        // Set dictionary path for cpp-pinyin
+        Pinyin::setDictionaryPath(fs::path(pinyin_dict_dir));
+
+        // Create Pinyin converter
+        pinyin_converter_ = std::make_unique<Pinyin::Pinyin>();
+
+        std::cout << "cpp-pinyin initialized successfully." << std::endl;
     }
     
     void extractModelMetadata() {
@@ -944,7 +1083,12 @@ private:
             if (end_it != token_to_id_.end()) {
                 token_ids.push_back(end_it->second);
             }
-            
+
+            return token_ids;
+        } else if (config_.language == "zh-en" && pinyin_converter_) {
+            // zh-en bilingual text processing
+            // Process character by character, detecting Chinese vs English
+            token_ids = processZhEnText(text);
             return token_ids;
         } else {
             // For other languages, skip with warning
@@ -1004,6 +1148,148 @@ private:
         
         int exit_status = pclose(pipe.release());
         return exit_status == 0 && !result.empty();
+    }
+
+    // Check if a UTF-8 character is a Chinese character (CJK Unified Ideographs)
+    bool isChineseChar(const std::string& ch) {
+        if (ch.length() != 3) return false;
+        unsigned char c0 = ch[0];
+        unsigned char c1 = ch[1];
+        // CJK Unified Ideographs: U+4E00 to U+9FFF (3-byte UTF-8: E4 B8 80 to E9 BF BF)
+        if (c0 >= 0xE4 && c0 <= 0xE9) {
+            if (c0 == 0xE4 && c1 < 0xB8) return false;
+            if (c0 == 0xE9 && c1 > 0xBF) return false;
+            return true;
+        }
+        return false;
+    }
+
+    // Check if a character is an ASCII letter
+    bool isEnglishLetter(const std::string& ch) {
+        if (ch.length() != 1) return false;
+        char c = ch[0];
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    }
+
+    // Process zh-en bilingual text
+    std::vector<int64_t> processZhEnText(const std::string& text) {
+        std::vector<int64_t> token_ids;
+        std::vector<std::string> chars = splitUtf8(text);
+
+        size_t i = 0;
+        while (i < chars.size()) {
+            if (isChineseChar(chars[i])) {
+                // Collect consecutive Chinese characters
+                std::string chinese_part;
+                while (i < chars.size() && isChineseChar(chars[i])) {
+                    chinese_part += chars[i];
+                    i++;
+                }
+                // Convert Chinese to pinyin and get IDs
+                auto ids = processChineseToPinyinIds(chinese_part);
+                token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+            } else if (isEnglishLetter(chars[i])) {
+                // Collect consecutive English letters
+                std::string english_part;
+                while (i < chars.size() && isEnglishLetter(chars[i])) {
+                    english_part += chars[i];
+                    i++;
+                }
+                // Convert English to IPA and get IDs
+                auto ids = processEnglishToIds(english_part);
+                token_ids.insert(token_ids.end(), ids.begin(), ids.end());
+            } else {
+                // Handle punctuation and other characters
+                std::string ch = chars[i];
+                // Map Chinese punctuation to ASCII
+                if (ch == "，") ch = ",";
+                else if (ch == "。") ch = ".";
+                else if (ch == "！") ch = "!";
+                else if (ch == "？") ch = "?";
+
+                auto it = token_to_id_.find(ch);
+                if (it != token_to_id_.end()) {
+                    token_ids.push_back(it->second);
+                } else {
+                    // Default to 1 for unknown tokens
+                    token_ids.push_back(1);
+                }
+                i++;
+            }
+        }
+
+        return token_ids;
+    }
+
+    // Convert Chinese text to pinyin and then to token IDs
+    std::vector<int64_t> processChineseToPinyinIds(const std::string& chinese_text) {
+        std::vector<int64_t> ids;
+
+        if (!pinyin_converter_) {
+            return ids;
+        }
+
+        // Use cpp-pinyin to convert Chinese to pinyin with tone numbers
+        Pinyin::PinyinResVector result = pinyin_converter_->hanziToPinyin(
+            chinese_text,
+            Pinyin::ManTone::Style::TONE3,  // Tone numbers at end (zhong1)
+            Pinyin::Error::Default,
+            false,  // candidates
+            false,  // v_to_u
+            true    // neutral_tone_with_five (轻声用5)
+        );
+
+        // Convert each pinyin to token ID
+        for (const auto& res : result) {
+            std::string pinyin = res.pinyin;
+            auto it = token_to_id_.find(pinyin);
+            if (it != token_to_id_.end()) {
+                ids.push_back(it->second);
+            } else {
+                // Try lowercase
+                std::string lower_pinyin = pinyin;
+                std::transform(lower_pinyin.begin(), lower_pinyin.end(), lower_pinyin.begin(), ::tolower);
+                auto lower_it = token_to_id_.find(lower_pinyin);
+                if (lower_it != token_to_id_.end()) {
+                    ids.push_back(lower_it->second);
+                } else {
+                    // Default to 1 for unknown tokens
+                    ids.push_back(1);
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    // Convert English text to IPA and then to token IDs (for zh-en model)
+    std::vector<int64_t> processEnglishToIds(const std::string& english_text) {
+        std::vector<int64_t> ids;
+
+        // Get IPA from espeak-ng
+        std::string ipa = processEnglishTextToPhonemes(english_text);
+        if (ipa.empty()) {
+            return ids;
+        }
+
+        // Convert to gruut en-us format
+        std::string gruut_ipa = convertToGruutEnUs(ipa);
+
+        // Convert each character to token ID
+        std::vector<std::string> ipa_chars = splitUtf8(gruut_ipa);
+        for (const auto& ch : ipa_chars) {
+            if (ch.empty()) continue;
+
+            auto it = token_to_id_.find(ch);
+            if (it != token_to_id_.end()) {
+                ids.push_back(it->second);
+            } else {
+                // Default to 1 for unknown tokens
+                ids.push_back(1);
+            }
+        }
+
+        return ids;
     }
     
     // Convert English text to IPA phonemes using espeak-ng
@@ -1299,16 +1585,19 @@ private:
 private:
     TTSConfig config_;
     bool initialized_ = false;
-    
+
     // ONNX Runtime
     std::unique_ptr<Ort::Env> env_;
     std::unique_ptr<Ort::Session> acoustic_model_;
     std::unique_ptr<Ort::Session> vocoder_model_;
-    
+
     // Text processing
     std::unique_ptr<cppjieba::Jieba> jieba_;
     std::unordered_map<std::string, int64_t> token_to_id_;
     std::unordered_map<std::string, std::string> lexicon_;
+
+    // cpp-pinyin for zh-en bilingual model
+    std::unique_ptr<Pinyin::Pinyin> pinyin_converter_;
     
     // Model info
     int mel_dim_ = 80;

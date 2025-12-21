@@ -14,7 +14,7 @@ bool TTSDemo::initialize(){
     }
     
     tts::TTSConfig tts_config;
-    
+
     if (params_.tts_type == "en") {
         // English configuration
         tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_EN_MODEL);
@@ -26,6 +26,19 @@ bool TTSDemo::initialize(){
         tts_config.lexicon_path = "";
         tts_config.dict_dir = "";
         tts_config.jieba_dict_dir = "";
+    } else if (params_.tts_type == "zh-en") {
+        // zh-en bilingual configuration (local model)
+        // Model is in project directory, not cache
+        tts_config.acoustic_model_path = "matchatts-zh-en/model-steps-6.onnx";
+        tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER_16K);
+        tts_config.tokens_path = "matchatts-zh-en/vocab_tts.txt";
+        tts_config.language = "zh-en";
+        tts_config.sample_rate = 16000;  // zh-en model uses 16kHz
+        // No lexicon needed (uses cpp-pinyin for Chinese, espeak-ng for English)
+        tts_config.lexicon_path = "";
+        tts_config.dict_dir = "";
+        tts_config.jieba_dict_dir = "";
+        tts_config.data_dir = "";
     } else {
         // Chinese configuration (default)
         tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_MODEL);
@@ -36,7 +49,10 @@ bool TTSDemo::initialize(){
         tts_config.jieba_dict_dir = "";  // Will auto-detect cppjieba location
         tts_config.language = "zh";
     }
-    tts_config.sample_rate = 22050;
+    // Set sample rate (zh-en uses 16kHz, others use 22kHz)
+    if (params_.tts_type != "zh-en") {
+        tts_config.sample_rate = 22050;
+    }
     tts_config.noise_scale = 1.0f;
     tts_config.length_scale = params_.tts_speed;
     tts_config.target_rms = params_.target_rms;

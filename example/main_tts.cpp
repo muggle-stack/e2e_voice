@@ -13,7 +13,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.1, range: 0.05-0.3)" << std::endl;
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0, range: 1.0-10.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS (not recommended)" << std::endl;
-    std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English (default: zh)" << std::endl;
+    std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English, 'zh-en' for bilingual (default: zh)" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
 }
 
@@ -65,6 +65,8 @@ int main(int argc, char** argv) {
     if (text.empty()) {
         if (params.tts_type == "en") {
             text = "Hello, this is a text-to-speech test.";
+        } else if (params.tts_type == "zh-en") {
+            text = "你好，Hello, 这是一个中英双语语音合成测试。This is a bilingual TTS test.";
         } else {
             text = "你好，这是一个语音合成测试。";
         }

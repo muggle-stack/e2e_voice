@@ -17,6 +17,11 @@ public:
     static constexpr const char* MATCHA_EN_TOKENS = "matcha-icefall-en_US-ljspeech/tokens.txt";
     static constexpr const char* MATCHA_EN_DATA_DIR = "matcha-icefall-en_US-ljspeech/espeak-ng-data";
     static constexpr const char* VOCOS_VOCODER = "vocos-22khz-univ.onnx";
+    static constexpr const char* VOCOS_VOCODER_16K = "vocos-16khz-univ.onnx";
+
+    // zh-en bilingual model (local path, not downloaded)
+    static constexpr const char* MATCHA_ZH_EN_MODEL = "matchatts-zh-en/model-steps-6.onnx";
+    static constexpr const char* MATCHA_ZH_EN_TOKENS = "matchatts-zh-en/vocab_tts.txt";
     
     TTSModelDownloader();
     ~TTSModelDownloader() = default;
