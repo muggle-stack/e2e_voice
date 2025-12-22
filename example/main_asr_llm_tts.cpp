@@ -271,11 +271,10 @@ public:
             tts_config.dict_dir = "";
             tts_config.jieba_dict_dir = "";
         } else if (params_.tts_type == "zh-en") {
-            // zh-en bilingual configuration (local model)
-            // Model is in project directory, not cache
-            tts_config.acoustic_model_path = "matchatts-zh-en/model-steps=6.onnx";
+            // zh-en bilingual configuration (downloaded from server)
+            tts_config.acoustic_model_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_EN_MODEL);
             tts_config.vocoder_path = tts_downloader.getModelPath(tts::TTSModelDownloader::VOCOS_VOCODER_16K);
-            tts_config.tokens_path = "matchatts-zh-en/vocab_tts.txt";
+            tts_config.tokens_path = tts_downloader.getModelPath(tts::TTSModelDownloader::MATCHA_ZH_EN_TOKENS);
             tts_config.language = "zh-en";
             tts_config.sample_rate = 16000;  // zh-en model uses 16kHz
             // No lexicon needed (uses cpp-pinyin for Chinese, espeak-ng for English)

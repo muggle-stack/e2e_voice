@@ -549,15 +549,21 @@ include/
 ### TTS模型 (Matcha)
 - **模型路径**：`~/.cache/matcha-tts/`
 - **中文TTS模型**：`matcha-icefall-zh-baker/`
-  - `model-steps=6.onnx` - 中文声学模型
+  - `model-steps-3.onnx` - 中文声学模型
   - `lexicon.txt` - 中文发音词典
   - `tokens.txt` - 中文音素标记
   - `dict/` - 中文词典目录
 - **英文TTS模型**：`matcha-icefall-en_US-ljspeech/`
-  - `model-steps=6.onnx` - 英文声学模型
+  - `model-steps-3.onnx` - 英文声学模型
   - `tokens.txt` - 英文音素标记
   - `espeak-ng-data/` - 英文发音数据
-- **共享声码器**：`vocos-22khz-univ.onnx` - 通用声码器模型
+- **中英双语TTS模型**：`matcha-icefall-zh-en/` (自动下载)
+  - `model-steps-3.onnx` - 中英双语声学模型
+  - `vocab_tts.txt` - 中英双语词表
+  - 基于 [dengcunqin](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010/summary) 微调的模型
+- **共享声码器**：
+  - `vocos-22khz-univ.onnx` - 22kHz通用声码器（中文/英文）
+  - `vocos-16khz-univ.onnx` - 16kHz通用声码器（中英双语）
 - **自动下载**：首次使用时根据语言类型自动下载对应模型
 
 ## 技术亮点

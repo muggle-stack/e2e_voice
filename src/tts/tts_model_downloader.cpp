@@ -29,50 +29,68 @@ bool TTSModelDownloader::ensureModelsExist(const std::string& language) {
         return false;
     }
 
-    // zh-en model is local (not downloaded)
-    if (language == "zh-en") {
-        // Check local model files exist
-        // The zh-en model is in project directory, not cache
-        return true; // Local model assumed to exist
-    }
-
     // First ensure vocoder exists (shared between languages)
-    std::string vocoder_path = getModelPath(VOCOS_VOCODER);
-    if (!fs::exists(vocoder_path)) {
-        if (!downloadVocoder()) {
-            std::cerr << "Failed to download vocoder" << std::endl;
-            return false;
-        }
-    }
-
-    // Check language-specific models
-    if (language == "zh") {
-        std::string model_path = getModelPath(MATCHA_ZH_MODEL);
-        std::string lexicon_path = getModelPath(MATCHA_ZH_LEXICON);
-        std::string tokens_path = getModelPath(MATCHA_ZH_TOKENS);
-        std::string dict_path = getModelPath(MATCHA_ZH_DICT_DIR);
-
-        if (!fs::exists(model_path) || !fs::exists(lexicon_path) ||
-            !fs::exists(tokens_path) || !fs::exists(dict_path)) {
-            if (!downloadLanguageModel("zh")) {
-                std::cerr << "Failed to download Chinese TTS models" << std::endl;
+    if (language == "zh-en") {
+        // zh-en uses 16kHz vocoder
+        std::string vocoder_path = getModelPath(VOCOS_VOCODER_16K);
+        if (!fs::exists(vocoder_path)) {
+            std::string url = "https://archive.spacemit.com/spacemit-ai/openwebui/vocos-16khz-univ.onnx";
+            std::cout << "Downloading 16kHz vocoder from " << url << "..." << std::endl;
+            if (!downloadFile(url, vocoder_path)) {
+                std::cerr << "Failed to download 16kHz vocoder" << std::endl;
                 return false;
             }
         }
-    } else if (language == "en") {
-        std::string model_path = getModelPath(MATCHA_EN_MODEL);
-        std::string tokens_path = getModelPath(MATCHA_EN_TOKENS);
-        std::string data_dir = getModelPath(MATCHA_EN_DATA_DIR);
 
-        if (!fs::exists(model_path) || !fs::exists(tokens_path) || !fs::exists(data_dir)) {
-            if (!downloadLanguageModel("en")) {
-                std::cerr << "Failed to download English TTS models" << std::endl;
+        // Check zh-en model files
+        std::string model_path = getModelPath(MATCHA_ZH_EN_MODEL);
+        std::string tokens_path = getModelPath(MATCHA_ZH_EN_TOKENS);
+
+        if (!fs::exists(model_path) || !fs::exists(tokens_path)) {
+            if (!downloadLanguageModel("zh-en")) {
+                std::cerr << "Failed to download Chinese-English bilingual TTS models" << std::endl;
                 return false;
             }
         }
     } else {
-        std::cerr << "Unsupported language: " << language << std::endl;
-        return false;
+        // zh and en use 22kHz vocoder
+        std::string vocoder_path = getModelPath(VOCOS_VOCODER);
+        if (!fs::exists(vocoder_path)) {
+            if (!downloadVocoder()) {
+                std::cerr << "Failed to download vocoder" << std::endl;
+                return false;
+            }
+        }
+
+        // Check language-specific models
+        if (language == "zh") {
+            std::string model_path = getModelPath(MATCHA_ZH_MODEL);
+            std::string lexicon_path = getModelPath(MATCHA_ZH_LEXICON);
+            std::string tokens_path = getModelPath(MATCHA_ZH_TOKENS);
+            std::string dict_path = getModelPath(MATCHA_ZH_DICT_DIR);
+
+            if (!fs::exists(model_path) || !fs::exists(lexicon_path) ||
+                !fs::exists(tokens_path) || !fs::exists(dict_path)) {
+                if (!downloadLanguageModel("zh")) {
+                    std::cerr << "Failed to download Chinese TTS models" << std::endl;
+                    return false;
+                }
+            }
+        } else if (language == "en") {
+            std::string model_path = getModelPath(MATCHA_EN_MODEL);
+            std::string tokens_path = getModelPath(MATCHA_EN_TOKENS);
+            std::string data_dir = getModelPath(MATCHA_EN_DATA_DIR);
+
+            if (!fs::exists(model_path) || !fs::exists(tokens_path) || !fs::exists(data_dir)) {
+                if (!downloadLanguageModel("en")) {
+                    std::cerr << "Failed to download English TTS models" << std::endl;
+                    return false;
+                }
+            }
+        } else {
+            std::cerr << "Unsupported language: " << language << std::endl;
+            return false;
+        }
     }
 
     std::cout << "All TTS models for " << language << " are ready!" << std::endl;
@@ -207,9 +225,18 @@ bool TTSModelDownloader::downloadLanguageModel(const std::string& language) {
         std::cerr << "No URL available for language: " << language << std::endl;
         return false;
     }
-    
-    std::string archive_name = std::string("matcha-icefall-") + 
-        (language == "zh" ? "zh-baker" : "en_US-ljspeech") + ".tar.gz";
+
+    std::string archive_name;
+    if (language == "zh") {
+        archive_name = "matcha-icefall-zh-baker.tar.gz";
+    } else if (language == "en") {
+        archive_name = "matcha-icefall-en_US-ljspeech.tar.gz";
+    } else if (language == "zh-en") {
+        archive_name = "matcha-icefall-zh-en.tar.gz";
+    } else {
+        std::cerr << "Unknown language: " << language << std::endl;
+        return false;
+    }
     std::string archive_path = cache_dir_ + archive_name;
     
     std::cout << "Downloading " << language << " TTS models from " << url << "..." << std::endl;
@@ -240,6 +267,8 @@ std::string TTSModelDownloader::getLanguageModelUrl(const std::string& language)
         return "https://archive.spacemit.com/spacemit-ai/openwebui/matcha-icefall-zh-baker.tar.gz";
     } else if (language == "en") {
         return "https://archive.spacemit.com/spacemit-ai/openwebui/matcha-icefall-en_US-ljspeech.tar.gz";
+    } else if (language == "zh-en") {
+        return "https://archive.spacemit.com/spacemit-ai/openwebui/matcha-icefall-zh-en.tar.gz";
     }
     return "";
 }
