@@ -671,9 +671,32 @@ A: 项目已使用`OrderedAudioQueue`解决此问题
 # 使用中文TTS
 ./build/bin/asr_llm_tts --tts_type zh
 
-# 使用英文TTS  
+# 使用英文TTS
 ./build/bin/asr_llm_tts --tts_type en
+
+# 使用中英双语TTS（推荐，支持混合文本）
+./build/bin/asr_llm_tts --tts_type zh-en
 ```
+
+**Q: 如何使用中英双语TTS？**
+```bash
+# 完整语音对话系统
+./build/bin/asr_llm_tts \
+    --device_index 1 \
+    --channels 1 \
+    --sample_rate 48000 \
+    --tts_type zh-en \
+    --model qwen2.5:0.5b \
+    --vad_type silero
+
+# 单独TTS测试
+./build/bin/tts --text "今天学习Python，价格99元" --tts_type zh-en
+```
+A: 中英双语TTS支持：
+- 中英混合文本自动识别
+- 阿拉伯数字自动转中文朗读（123 → 一百二十三）
+- 罗马数字支持（III → 三，需2位及以上）
+- 模型首次使用时自动下载到 `~/.cache/matcha-tts/matcha-icefall-zh-en/`
 
 ### 4. 性能优化
 **Q: 响应速度慢？**
@@ -805,7 +828,17 @@ int main() {
 
 ## 更新日志
 
-### v3.0.0 (当前版本)
+### v3.1.0 (当前版本)
+- ✅ **中英双语TTS支持**：新增基于Matcha-TTS的中英混合语音合成功能
+- ✅ **cpp-pinyin集成**：使用cpp-pinyin库进行高精度中文转拼音（带声调）
+- ✅ **espeak-ng美式发音**：英文部分使用美式IPA音素，发音更准确
+- ✅ **阿拉伯数字朗读**：自动将数字转换为中文读法（如 123 → 一百二十三，3.14 → 三点一四）
+- ✅ **罗马数字支持**：2位及以上罗马数字自动转中文（如 III → 三，IV → 四）
+- ✅ **智能语言检测**：自动识别中文、英文、数字和标点，无缝处理混合文本
+- ✅ **模型自动下载**：zh-en模型首次使用时自动下载，无需手动配置
+- 🙏 **感谢 [dengcunqin](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010/summary) 微调并开源中英文Matcha模型**
+
+### v3.0.0
 - ✅ **云端ASR集成**：支持阿里云实时ASR，1-2秒低延迟识别
 - ✅ **云端LLM集成**：支持云端API（DeepSeek/OpenAI）作为LLM后端
 - ✅ **灵活模块化**：ASR和LLM支持本地/云端独立切换，4种部署模式

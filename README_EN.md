@@ -672,7 +672,30 @@ A: The project uses `OrderedAudioQueue` to solve this problem
 
 # Use English TTS
 ./build/bin/asr_llm_tts --tts_type en
+
+# Use Chinese-English Bilingual TTS (recommended for mixed text)
+./build/bin/asr_llm_tts --tts_type zh-en
 ```
+
+**Q: How to use Chinese-English Bilingual TTS?**
+```bash
+# Full voice conversation system
+./build/bin/asr_llm_tts \
+    --device_index 1 \
+    --channels 1 \
+    --sample_rate 48000 \
+    --tts_type zh-en \
+    --model qwen2.5:0.5b \
+    --vad_type silero
+
+# Standalone TTS test
+./build/bin/tts --text "今天学习Python，价格99元" --tts_type zh-en
+```
+A: Chinese-English Bilingual TTS supports:
+- Automatic recognition of mixed Chinese-English text
+- Arabic numerals automatically converted to Chinese reading (123 → 一百二十三)
+- Roman numeral support (III → 三, requires 2+ characters)
+- Model automatically downloads to `~/.cache/matcha-tts/matcha-icefall-zh-en/` on first use
 
 ### 4. Performance Optimization
 **Q: Response too slow?**
@@ -804,7 +827,17 @@ Welcome to submit Issues and Pull Requests!
 
 ## Changelog
 
-### v3.0.0 (Current Version)
+### v3.1.0 (Current Version)
+- ✅ **Chinese-English Bilingual TTS Support**: Added Chinese-English mixed speech synthesis based on Matcha-TTS
+- ✅ **cpp-pinyin Integration**: High-precision Chinese to pinyin conversion using cpp-pinyin library (with tones)
+- ✅ **espeak-ng American English**: English parts use American IPA phonemes for more accurate pronunciation
+- ✅ **Arabic Numeral Reading**: Automatically convert numbers to Chinese reading (e.g., 123 → 一百二十三, 3.14 → 三点一四)
+- ✅ **Roman Numeral Support**: Roman numerals with 2+ characters automatically converted to Chinese (e.g., III → 三, IV → 四)
+- ✅ **Intelligent Language Detection**: Automatically recognize Chinese, English, digits, and punctuation for seamless mixed text processing
+- ✅ **Automatic Model Download**: zh-en model automatically downloads on first use, no manual configuration required
+- 🙏 **Thanks to [dengcunqin](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010/summary) for fine-tuning and open-sourcing the Chinese-English Matcha model**
+
+### v3.0.0
 - ✅ **Cloud ASR Integration**: Support Aliyun real-time ASR with 1-2 second low-latency recognition
 - ✅ **Cloud LLM Integration**: Support cloud APIs (DeepSeek/OpenAI) as LLM backend
 - ✅ **Flexible Modular Architecture**: ASR and LLM support independent local/cloud switching, 4 deployment modes
