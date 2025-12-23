@@ -497,14 +497,16 @@ python search_device.py
 
 ### 核心模块
 ```
-src/
+example/
 ├── main_asr_llm_tts.cpp    # 完整对话系统主程序 (Ollama)
 ├── main_asr_llm_tts_api.cpp # 云端API对话系统 (DeepSeek/OpenAI)
 ├── main_streaming_asr.cpp  # 流式ASR主程序
 ├── main_ase.cpp            # 音频文件处理引擎 (asr)
 ├── main_llm.cpp            # ASR+LLM系统
 ├── main_asr.cpp            # VAD+ASR实时系统 (vad_asr)
-├── main_tts.cpp            # TTS独立工具主程序
+└── main_tts.cpp            # TTS独立工具主程序
+
+src/
 ├── tts_demo.cpp            # TTS API实现 (外部可用)
 ├── audio_recorder.cpp      # 音频录制模块
 ├── streaming_audio_recorder.cpp # 流式音频录制器

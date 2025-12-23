@@ -495,14 +495,16 @@ python search_device.py
 
 ### Core Modules
 ```
-src/
+example/
 ├── main_asr_llm_tts.cpp    # Complete dialogue system main program (Ollama)
 ├── main_asr_llm_tts_api.cpp # Cloud API dialogue system (DeepSeek/OpenAI)
 ├── main_streaming_asr.cpp  # Streaming ASR main program
 ├── main_ase.cpp            # Audio file processing engine (asr)
 ├── main_llm.cpp            # ASR+LLM system
 ├── main_asr.cpp            # VAD+ASR real-time system (vad_asr)
-├── main_tts.cpp            # TTS standalone tool main program
+└── main_tts.cpp            # TTS standalone tool main program
+
+src/
 ├── tts_demo.cpp            # TTS API implementation (available externally)
 ├── audio_recorder.cpp      # Audio recording module
 ├── streaming_audio_recorder.cpp # Streaming audio recorder
