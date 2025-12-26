@@ -14,6 +14,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0, range: 1.0-10.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS (not recommended)" << std::endl;
     std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English, 'zh-en' for bilingual (default: zh)" << std::endl;
+    std::cout << "  --output_sample_rate <value> Output sample rate after resampling (default: 0 = no resampling, e.g., 48000)" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
 }
 
@@ -54,6 +55,9 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--tts_type" && i + 1 < argc) {
             params.tts_type = argv[++i];
+        }
+        else if (arg == "--output_sample_rate" && i + 1 < argc) {
+            params.output_sample_rate = std::atoi(argv[++i]);
         }
         else {
             std::cerr << "Invalid argument: " << arg << std::endl;

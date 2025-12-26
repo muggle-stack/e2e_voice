@@ -21,7 +21,8 @@ struct TTSConfig {
     int speaker_id = 0;                // For multi-speaker models
     
     // Runtime parameters
-    int sample_rate = 22050;           // Output sample rate
+    int sample_rate = 22050;           // Model native sample rate
+    int output_sample_rate = 0;        // Output sample rate after resampling (0 = no resampling)
     int max_num_sentences = 5;         // Max sentences per batch
     std::string language = "zh";       // Language: "zh" or "en" supported
     

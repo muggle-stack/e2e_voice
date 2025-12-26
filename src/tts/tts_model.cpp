@@ -513,6 +513,37 @@ std::vector<float> removeClicksAndPops(const std::vector<float>& audio) {
     return processed;
 }
 
+// Resample audio using linear interpolation
+// For upsampling (e.g., 16kHz -> 48kHz), linear interpolation works well
+std::vector<float> resampleAudio(const std::vector<float>& audio, int src_rate, int dst_rate) {
+    if (audio.empty() || src_rate == dst_rate || dst_rate <= 0) {
+        return audio;
+    }
+
+    double ratio = static_cast<double>(dst_rate) / src_rate;
+    size_t output_size = static_cast<size_t>(audio.size() * ratio);
+    std::vector<float> resampled(output_size);
+
+    for (size_t i = 0; i < output_size; ++i) {
+        double src_pos = i / ratio;
+        size_t src_idx = static_cast<size_t>(src_pos);
+        double frac = src_pos - src_idx;
+
+        if (src_idx + 1 < audio.size()) {
+            // Linear interpolation between two adjacent samples
+            resampled[i] = static_cast<float>(
+                audio[src_idx] * (1.0 - frac) + audio[src_idx + 1] * frac
+            );
+        } else if (src_idx < audio.size()) {
+            resampled[i] = audio[src_idx];
+        } else {
+            resampled[i] = 0.0f;
+        }
+    }
+
+    return resampled;
+}
+
 } // anonymous namespace
 
 // TTSModel implementation
@@ -655,7 +686,7 @@ public:
             audio.sample_rate = config_.sample_rate;
             return audio;
         }
-        
+
         // Run vocoder
         std::vector<float> audio_samples;
         {
@@ -663,25 +694,37 @@ public:
             std::lock_guard<std::mutex> lock(inference_mutex_);
             audio_samples = vocoderInference(*vocoder_model_, mel, mel_dim_, config_);
         }
-        
+
         // Create result with proper initialization
         GeneratedAudio audio;
+
+        // Apply resampling if output_sample_rate is specified
+        if (config_.output_sample_rate > 0 && config_.output_sample_rate != config_.sample_rate) {
+            audio_samples = resampleAudio(audio_samples, config_.sample_rate, config_.output_sample_rate);
+            audio.sample_rate = config_.output_sample_rate;
+        } else {
+            audio.sample_rate = config_.sample_rate;
+        }
+
         audio.samples.reserve(audio_samples.size()); // Pre-allocate for RISC-V
         audio.samples = std::move(audio_samples);
-        audio.sample_rate = config_.sample_rate;
-        
+
         return audio;
     }
-    
+
     bool isInitialized() const {
         return initialized_;
     }
-    
+
     int getNumSpeakers() const {
         return num_speakers_;
     }
-    
+
     int getSampleRate() const {
+        // Return output sample rate if resampling is enabled
+        if (config_.output_sample_rate > 0) {
+            return config_.output_sample_rate;
+        }
         return config_.sample_rate;
     }
     

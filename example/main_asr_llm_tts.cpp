@@ -66,6 +66,7 @@ public:
         float compression_threshold;
         bool use_rms_norm;
         std::string tts_type;
+        int output_sample_rate;  // Output sample rate after resampling (0 = no resampling)
 
         // Speaker recognition params
         bool enable_speaker_recognition;
@@ -96,6 +97,7 @@ public:
             compression_threshold(0.7f),
             use_rms_norm(true),
             tts_type("zh"),
+            output_sample_rate(0),
             enable_speaker_recognition(false),
             speaker_threshold(0.6f),
             speaker_database("speakers.db") {}
@@ -302,6 +304,7 @@ public:
         tts_config.compression_ratio = params_.compression_ratio;
         tts_config.compression_threshold = params_.compression_threshold;
         tts_config.use_rms_norm = params_.use_rms_norm;
+        tts_config.output_sample_rate = params_.output_sample_rate;
         
         tts_model_ = std::make_unique<tts::TTSModel>(tts_config);
         if (!tts_model_->initialize()) {
@@ -886,6 +889,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --tts_speed <value>         TTS speech speed (default: 1.0, >1.0 = slower)" << std::endl;
     std::cout << "  --tts_speaker <value>       TTS speaker ID for multi-speaker models (default: 0)" << std::endl;
     std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English, 'zh-en' for bilingual (default: zh)" << std::endl;
+    std::cout << "  --output_sample_rate <value> Output sample rate after resampling (default: 0 = no resampling, e.g., 48000)" << std::endl;
     std::cout << "  --target_rms <value>        Target RMS level for volume normalization (default: 0.1)" << std::endl;
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 3.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
@@ -953,6 +957,9 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--tts_type" && i + 1 < argc) {
             params.tts_type = argv[++i];
+        }
+        else if (arg == "--output_sample_rate" && i + 1 < argc) {
+            params.output_sample_rate = std::atoi(argv[++i]);
         }
         else if (arg == "--target_rms" && i + 1 < argc) {
             params.target_rms = std::atof(argv[++i]);

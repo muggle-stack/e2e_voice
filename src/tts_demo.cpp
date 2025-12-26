@@ -58,6 +58,7 @@ bool TTSDemo::initialize(){
     tts_config.compression_ratio = params_.compression_ratio;
     tts_config.compression_threshold = params_.compression_threshold;
     tts_config.use_rms_norm = params_.use_rms_norm;
+    tts_config.output_sample_rate = params_.output_sample_rate;
 
     tts_model_ = std::make_unique<tts::TTSModel>(tts_config);
     if (!tts_model_->initialize()) {

@@ -49,7 +49,8 @@ public:
         float compression_threshold;
         bool use_rms_norm;
         std::string tts_type;
-        
+        int output_sample_rate;  // Output sample rate after resampling (0 = no resampling)
+
         // API params
         std::string api_key;
         std::string api_url;
@@ -73,6 +74,7 @@ public:
             compression_threshold(0.7f),
             use_rms_norm(true),
             tts_type("zh"),
+            output_sample_rate(0),
             env_file(".env") {}
     };
 
@@ -233,6 +235,7 @@ public:
         tts_config.compression_ratio = params_.compression_ratio;
         tts_config.compression_threshold = params_.compression_threshold;
         tts_config.use_rms_norm = params_.use_rms_norm;
+        tts_config.output_sample_rate = params_.output_sample_rate;
         
         tts_model_ = std::make_unique<tts::TTSModel>(tts_config);
         if (!tts_model_->initialize()) {
@@ -617,6 +620,7 @@ void printUsage(const char* program_name) {
     std::cout << "  --compression_ratio <value> Dynamic range compression ratio (default: 2.0)" << std::endl;
     std::cout << "  --use_peak_norm             Use peak normalization instead of RMS" << std::endl;
     std::cout << "  --tts_type <value>          TTS language type: 'zh' for Chinese, 'en' for English, 'zh-en' for bilingual (default: zh)" << std::endl;
+    std::cout << "  --output_sample_rate <value> Output sample rate after resampling (default: 0 = no resampling, e.g., 48000)" << std::endl;
     std::cout << "  --help                      Show this help message" << std::endl;
     std::cout << "\nSupported APIs:" << std::endl;
     std::cout << "  - DeepSeek: --api_url https://api.deepseek.com/chat/completions" << std::endl;
@@ -698,10 +702,13 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--tts_type" && i + 1 < argc) {
             params.tts_type = argv[++i];
-            if (params.tts_type != "zh" && params.tts_type != "en") {
-                std::cerr << "Invalid TTS type: " << params.tts_type << ". Must be 'zh' or 'en'" << std::endl;
+            if (params.tts_type != "zh" && params.tts_type != "en" && params.tts_type != "zh-en") {
+                std::cerr << "Invalid TTS type: " << params.tts_type << ". Must be 'zh', 'en', or 'zh-en'" << std::endl;
                 return 1;
             }
+        }
+        else if (arg == "--output_sample_rate" && i + 1 < argc) {
+            params.output_sample_rate = std::atoi(argv[++i]);
         }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;

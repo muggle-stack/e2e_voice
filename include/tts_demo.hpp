@@ -14,6 +14,7 @@ public:
         float compression_threshold;
         bool use_rms_norm;
         std::string tts_type;
+        int output_sample_rate;  // Output sample rate after resampling (0 = no resampling)
         Params() :
             tts_speed(1.0f),
             tts_speaker_id(0),
@@ -21,7 +22,8 @@ public:
             compression_ratio(2.0f),
             compression_threshold(0.7f),
             use_rms_norm(true),
-            tts_type("zh") {}
+            tts_type("zh"),
+            output_sample_rate(0) {}
     };
 
     TTSDemo(const Params& params = Params());
