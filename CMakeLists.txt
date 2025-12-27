@@ -1,13 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
-project(asr_cpp VERSION 3.0.0)
 
-# Use GCC-14 for better RISC-V support if available
+# Use GCC-14 for better RISC-V support if available (must be before project())
 find_program(GCC14 gcc-14)
 find_program(GXX14 g++-14)
 
 if(GCC14 AND GXX14)
-    set(CMAKE_C_COMPILER gcc-14)
-    set(CMAKE_CXX_COMPILER g++-14)
+    set(CMAKE_C_COMPILER ${GCC14} CACHE PATH "C compiler" FORCE)
+    set(CMAKE_CXX_COMPILER ${GXX14} CACHE PATH "CXX compiler" FORCE)
+endif()
+
+project(asr_cpp VERSION 3.0.0)
+
+if(GCC14 AND GXX14)
     message(STATUS "Using GCC-14 for better RISC-V support")
 else()
     message(STATUS "GCC-14 not found, using default compiler")
@@ -95,6 +99,16 @@ if(OPENSSL_FOUND)
     message(STATUS "OpenSSL libraries: ${OPENSSL_LIBRARIES}")
 else()
     message(FATAL_ERROR "OpenSSL not found. Please install with: brew install openssl")
+endif()
+
+# Add cpp-mcp library
+option(USE_MCP "Enable MCP (Model Context Protocol) support" OFF)
+if(USE_MCP)
+    set(MCP_BUILD_TESTS OFF CACHE BOOL "Disable MCP tests" FORCE)
+    add_subdirectory(cpp-mcp)
+    set(MCP_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/cpp-mcp/include)
+    set(MCP_COMMON_DIR ${CMAKE_SOURCE_DIR}/cpp-mcp/common)
+    message(STATUS "MCP support enabled")
 endif()
 
 # Use official cppjieba
@@ -388,4 +402,42 @@ set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm
 # Copy models directory if it exists
 if(EXISTS ${CMAKE_SOURCE_DIR}/models)
     file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
+endif()
+
+# MCP examples (calculator server and client)
+if(USE_MCP)
+    # MCP Calculator Server
+    add_executable(mcp_calculator_server example/mcp_calculator_server.cpp)
+    target_include_directories(mcp_calculator_server PRIVATE ${MCP_INCLUDE_DIR} ${MCP_COMMON_DIR})
+    target_link_libraries(mcp_calculator_server mcp pthread)
+    set_target_properties(mcp_calculator_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+    # MCP Calculator Client (test client)
+    add_executable(mcp_calculator_client example/mcp_calculator_client.cpp)
+    target_include_directories(mcp_calculator_client PRIVATE ${MCP_INCLUDE_DIR} ${MCP_COMMON_DIR})
+    target_link_libraries(mcp_calculator_client mcp pthread)
+    set_target_properties(mcp_calculator_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+    # ASR-LLM-TTS with MCP support
+    set(ASR_LLM_TTS_MCP_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} ${CPP_PINYIN_SOURCES}
+        src/text_buffer.cpp src/ordered_audio_queue.cpp example/main_asr_llm_tts_mcp.cpp)
+    if(USE_CLOUD_ASR)
+        list(APPEND ASR_LLM_TTS_MCP_SOURCES src/asr_realtime_api.cpp)
+    endif()
+    if(USE_CLOUD_LLM)
+        list(APPEND ASR_LLM_TTS_MCP_SOURCES src/api_comm.cpp)
+    endif()
+    add_executable(asr_llm_tts_mcp ${ASR_LLM_TTS_MCP_SOURCES})
+    target_compile_definitions(asr_llm_tts_mcp PRIVATE WITH_SPEAKER_RECOGNITION USE_MCP)
+    if(USE_CLOUD_ASR)
+        target_compile_definitions(asr_llm_tts_mcp PRIVATE USE_CLOUD_ASR)
+    endif()
+    if(USE_CLOUD_LLM)
+        target_compile_definitions(asr_llm_tts_mcp PRIVATE USE_CLOUD_LLM)
+    endif()
+    target_include_directories(asr_llm_tts_mcp PRIVATE ${MCP_INCLUDE_DIR} ${MCP_COMMON_DIR})
+    target_link_libraries(asr_llm_tts_mcp ${COMMON_LIBRARIES} mcp)
+    target_link_directories(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS})
+    target_compile_options(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_CFLAGS_OTHER} ${SNDFILE_CFLAGS_OTHER})
+    set_target_properties(asr_llm_tts_mcp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
