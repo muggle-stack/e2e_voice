@@ -205,21 +205,21 @@ int Tokenizer::tokenToId(const std::string& token) const {
 
 std::string Tokenizer::postProcessText(const std::string& text) {
     std::string result = text;
-    
+
     // Remove SenseVoice special tokens and formatting
     result = std::regex_replace(result, std::regex("<\\|[^|]*\\|>"), "");  // Remove <|zh|>, <|NEUTRAL|>, etc.
     result = std::regex_replace(result, std::regex("-?\\d+\\.\\d+"), "");  // Remove scores like -20.3711
-    result = std::regex_replace(result, std::regex("\\d+"), "");          // Remove standalone numbers
+    // Note: Do NOT remove standalone numbers - they are valid ASR output (e.g., "123", "2024")
     result = std::regex_replace(result, std::regex("\\?\\s*\\?"), "");    // Remove ? ? patterns
     result = std::regex_replace(result, std::regex("▁"), " ");            // Replace SentencePiece underscores
-    
+
     // Remove extra spaces and clean up
     result = std::regex_replace(result, std::regex("\\s+"), " ");
-    
+
     // Remove leading/trailing spaces
     result.erase(0, result.find_first_not_of(" \t\n\r"));
     result.erase(result.find_last_not_of(" \t\n\r") + 1);
-    
+
     return result;
 }
 
