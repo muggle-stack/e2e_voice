@@ -218,6 +218,69 @@ add_executable(asr_fc ${ASR_FC_SOURCES})
 # Options for cloud services (before defining executables)
 option(USE_CLOUD_ASR "Use cloud ASR service instead of local model" OFF)
 option(USE_CLOUD_LLM "Use cloud LLM API instead of local Ollama" OFF)
+option(USE_AEC "Enable WebRTC AEC (Acoustic Echo Cancellation) for barge-in support" OFF)
+
+# WebRTC Audio Processing for AEC
+if(USE_AEC)
+    set(WEBRTC_DIR ${CMAKE_SOURCE_DIR}/webrtc-audio-processing)
+    set(WEBRTC_BUILD_DIR ${WEBRTC_DIR}/build)
+
+    # Check if WebRTC is built
+    if(NOT EXISTS ${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.dylib AND
+       NOT EXISTS ${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.so)
+        message(FATAL_ERROR "WebRTC Audio Processing not built. Please run: cd webrtc-audio-processing && meson build && ninja -C build")
+    endif()
+
+    # Find abseil (required by WebRTC)
+    if(APPLE)
+        # macOS: find abseil via Homebrew
+        execute_process(
+            COMMAND brew --prefix abseil
+            OUTPUT_VARIABLE ABSEIL_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(ABSEIL_PREFIX)
+            set(ABSEIL_INCLUDE_DIR ${ABSEIL_PREFIX}/include)
+        else()
+            # Fallback to common Homebrew path
+            set(ABSEIL_INCLUDE_DIR /opt/homebrew/include)
+        endif()
+    else()
+        # Linux: check multiple locations
+        find_path(ABSEIL_INCLUDE_DIR absl/base/config.h
+            PATHS
+            /usr/include
+            /usr/local/include
+            ${WEBRTC_BUILD_DIR}/subprojects/abseil-cpp-20240722.0
+            ${WEBRTC_BUILD_DIR}/subprojects/abseil-cpp
+        )
+        if(NOT ABSEIL_INCLUDE_DIR)
+            message(FATAL_ERROR "Abseil not found. Install with: sudo apt install libabsl-dev")
+        endif()
+    endif()
+
+    # WebRTC include directories
+    set(WEBRTC_INCLUDE_DIRS
+        ${WEBRTC_DIR}
+        ${WEBRTC_DIR}/webrtc
+        ${WEBRTC_BUILD_DIR}
+        ${WEBRTC_BUILD_DIR}/webrtc
+        ${ABSEIL_INCLUDE_DIR}
+    )
+
+    # WebRTC library
+    if(APPLE)
+        set(WEBRTC_LIB ${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.dylib)
+    else()
+        set(WEBRTC_LIB ${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.so)
+    endif()
+
+    message(STATUS "WebRTC AEC support enabled")
+    message(STATUS "WebRTC include dirs: ${WEBRTC_INCLUDE_DIRS}")
+    message(STATUS "Abseil include dir: ${ABSEIL_INCLUDE_DIR}")
+    message(STATUS "WebRTC library: ${WEBRTC_LIB}")
+endif()
 
 # ASR-LLM-TTS executable (with speaker recognition)
 set(ASR_LLM_TTS_SOURCES ${COMMON_SOURCES} ${SPEAKER_SOURCES} ${TTS_SOURCES} ${CPP_PINYIN_SOURCES} src/text_buffer.cpp src/ordered_audio_queue.cpp example/main_asr_llm_tts.cpp)
@@ -440,4 +503,66 @@ if(USE_MCP)
     target_link_directories(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS})
     target_compile_options(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_CFLAGS_OTHER} ${SNDFILE_CFLAGS_OTHER})
     set_target_properties(asr_llm_tts_mcp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
+# AEC-enabled ASR-LLM-TTS executable (with WebRTC echo cancellation for barge-in)
+if(USE_AEC)
+    # AEC source files
+    set(AEC_SOURCES
+        src/aec_audio_processor.cpp
+    )
+
+    set(ASR_LLM_TTS_AEC_SOURCES
+        ${COMMON_SOURCES}
+        ${SPEAKER_SOURCES}
+        ${TTS_SOURCES}
+        ${CPP_PINYIN_SOURCES}
+        ${AEC_SOURCES}
+        src/text_buffer.cpp
+        src/ordered_audio_queue.cpp
+        example/main_asr_llm_tts_aec.cpp
+    )
+
+    if(USE_CLOUD_ASR)
+        list(APPEND ASR_LLM_TTS_AEC_SOURCES src/asr_realtime_api.cpp)
+    endif()
+    if(USE_CLOUD_LLM)
+        list(APPEND ASR_LLM_TTS_AEC_SOURCES src/api_comm.cpp)
+    endif()
+
+    add_executable(asr_llm_tts_aec ${ASR_LLM_TTS_AEC_SOURCES})
+
+    # Add WebRTC includes
+    target_include_directories(asr_llm_tts_aec PRIVATE ${WEBRTC_INCLUDE_DIRS})
+
+    # Compile definitions
+    target_compile_definitions(asr_llm_tts_aec PRIVATE WITH_SPEAKER_RECOGNITION USE_AEC)
+    if(USE_CLOUD_ASR)
+        target_compile_definitions(asr_llm_tts_aec PRIVATE USE_CLOUD_ASR)
+    endif()
+    if(USE_CLOUD_LLM)
+        target_compile_definitions(asr_llm_tts_aec PRIVATE USE_CLOUD_LLM)
+    endif()
+
+    # Link libraries (including WebRTC)
+    target_link_libraries(asr_llm_tts_aec ${COMMON_LIBRARIES} ${WEBRTC_LIB})
+
+    target_link_directories(asr_llm_tts_aec PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS})
+    target_compile_options(asr_llm_tts_aec PRIVATE ${PORTAUDIO_CFLAGS_OTHER} ${SNDFILE_CFLAGS_OTHER})
+    set_target_properties(asr_llm_tts_aec PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+    # Set RPATH for WebRTC library
+    if(APPLE)
+        set_target_properties(asr_llm_tts_aec PROPERTIES
+            INSTALL_RPATH "@executable_path/../lib;${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing"
+            BUILD_WITH_INSTALL_RPATH TRUE
+        )
+    else()
+        set_target_properties(asr_llm_tts_aec PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../lib:${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing"
+            BUILD_WITH_INSTALL_RPATH TRUE
+        )
+    endif()
+
+    message(STATUS "Building asr_llm_tts_aec with WebRTC AEC support")
 endif()
