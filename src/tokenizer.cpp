@@ -218,7 +218,44 @@ std::string Tokenizer::postProcessText(const std::string& text) {
 
     // Remove leading/trailing spaces
     result.erase(0, result.find_first_not_of(" \t\n\r"));
-    result.erase(result.find_last_not_of(" \t\n\r") + 1);
+    if (!result.empty()) {
+        size_t last = result.find_last_not_of(" \t\n\r");
+        if (last != std::string::npos) {
+            result.erase(last + 1);
+        }
+    }
+
+    // If result is only punctuation (no actual speech content), return empty
+    // This handles the case when SenseVoice outputs just "。" for silence/noise
+    if (!result.empty()) {
+        bool has_content = false;
+        size_t i = 0;
+        while (i < result.length()) {
+            unsigned char c = static_cast<unsigned char>(result[i]);
+            size_t char_len = 1;
+            if (c >= 0xF0) char_len = 4;
+            else if (c >= 0xE0) char_len = 3;
+            else if (c >= 0xC0) char_len = 2;
+
+            if (i + char_len <= result.length()) {
+                std::string ch = result.substr(i, char_len);
+                // Check if this is NOT punctuation/space
+                if (ch != "。" && ch != "，" && ch != "？" && ch != "！" &&
+                    ch != "." && ch != "," && ch != "?" && ch != "!" &&
+                    ch != " " && ch != "、" && ch != "；" && ch != "：" &&
+                    ch != "\"" && ch != "'" && ch != """ && ch != """ &&
+                    ch != "'" && ch != "'" && ch != "…" && ch != "—" &&
+                    ch != "\n" && ch != "\r" && ch != "\t") {
+                    has_content = true;
+                    break;
+                }
+            }
+            i += char_len;
+        }
+        if (!has_content) {
+            return "";  // Only punctuation, treat as no speech
+        }
+    }
 
     return result;
 }
