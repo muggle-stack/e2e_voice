@@ -75,14 +75,18 @@ find_package(CURL REQUIRED)
 # Find FFTW3
 if(APPLE)
     # macOS通过Homebrew安装的FFTW
-    find_library(FFTW3_LIBRARIES NAMES fftw3f PATHS /opt/homebrew/lib /usr/local/lib)
+    find_library(FFTW3F_LIB_PATH NAMES fftw3f PATHS /opt/homebrew/lib /usr/local/lib)
     find_path(FFTW3_INCLUDE_DIRS NAMES fftw3.h PATHS /opt/homebrew/include /usr/local/include)
-    if(NOT FFTW3_LIBRARIES OR NOT FFTW3_INCLUDE_DIRS)
+    if(NOT FFTW3F_LIB_PATH OR NOT FFTW3_INCLUDE_DIRS)
         message(FATAL_ERROR "FFTW3 not found. Please install with: brew install fftw")
     endif()
+    # Use full path (CACHE INTERNAL to avoid being overwritten by subprojects)
+    set(MAIN_FFTW3_LIBRARIES ${FFTW3F_LIB_PATH} CACHE INTERNAL "FFTW3F library path")
+    set(FFTW3_LIBRARY_DIRS /opt/homebrew/lib)
 else()
     # Linux使用pkg-config
     pkg_check_modules(FFTW3 REQUIRED fftw3f)
+    set(MAIN_FFTW3_LIBRARIES ${FFTW3_LIBRARIES} CACHE INTERNAL "FFTW3F library path")
 endif()
 
 # Find libarchive for tar.gz extraction (optional)
@@ -313,9 +317,9 @@ set(LIST_SPEAKERS_SOURCES ${SPEAKER_SOURCES} src/list_speakers.cpp)
 add_executable(list_speakers ${LIST_SPEAKERS_SOURCES})
 target_compile_definitions(list_speakers PRIVATE WITH_SPEAKER_RECOGNITION)
 
-# TTS executable (standalone)
+# TTS demo executable (standalone, renamed to avoid conflict with tts library)
 set(TTS_STANDALONE_SOURCES ${TTS_SOURCES} ${CPP_PINYIN_SOURCES} example/main_tts.cpp)
-add_executable(tts ${TTS_STANDALONE_SOURCES})
+add_executable(tts_demo ${TTS_STANDALONE_SOURCES})
 
 # Streaming ASR executable
 set(STREAMING_ASR_SOURCES ${COMMON_SOURCES} src/streaming_audio_recorder.cpp src/asr_thread_pool.cpp example/main_streaming_asr.cpp)
@@ -337,7 +341,7 @@ if(APPLE)
         ${PORTAUDIO_LIBRARIES}
         ${SNDFILE_LIBRARIES}
         ${CURL_LIBRARIES}
-        ${FFTW3_LIBRARIES}
+        /opt/homebrew/lib/libfftw3f.dylib
         ${OPENSSL_LIBRARIES}
         pthread
     )
@@ -358,7 +362,7 @@ else()
         ${PORTAUDIO_LIBRARIES}
         ${SNDFILE_LIBRARIES}
         ${CURL_LIBRARIES}
-        ${FFTW3_LIBRARIES}
+        ${MAIN_FFTW3_LIBRARIES}
         ${OPENSSL_LIBRARIES}
         pthread
     )
@@ -388,7 +392,7 @@ target_link_libraries(asr_correct ${COMMON_LIBRARIES})
 # Link libraries for ASR_fc executable
 target_link_libraries(asr_fc ${COMMON_LIBRARIES})
 
-target_link_libraries(tts ${COMMON_LIBRARIES})
+target_link_libraries(tts_demo ${COMMON_LIBRARIES})
 
 # Link libraries for ASR-LLM-TTS executable
 target_link_libraries(asr_llm_tts ${COMMON_LIBRARIES})
@@ -409,29 +413,17 @@ target_link_libraries(streaming_asr ${COMMON_LIBRARIES})
 target_link_libraries(asr_realtime_test ${REALTIME_TEST_LIBRARIES})
 
 # Add library search paths for all executables
-target_link_directories(asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(vad_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(vad_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(asr_llm PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr_llm PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(asr_correct PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr_correct PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(asr_fc PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr_fc PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(asr_llm_tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr_llm_tts PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(asr_llm_tts_api PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(asr_llm_tts_api PRIVATE ${SNDFILE_LIBRARY_DIRS})
-
-target_link_directories(register_speaker PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(register_speaker PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(list_speakers PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(list_speakers PRIVATE ${SNDFILE_LIBRARY_DIRS})
-target_link_directories(streaming_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
-target_link_directories(streaming_asr PRIVATE ${SNDFILE_LIBRARY_DIRS})
+target_link_directories(asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(vad_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(asr_llm PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(asr_correct PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(asr_fc PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(tts_demo PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(asr_llm_tts PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(asr_llm_tts_api PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(register_speaker PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(list_speakers PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
+target_link_directories(streaming_asr PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
 
 # Compiler flags for all executables
 target_compile_options(asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
@@ -443,8 +435,8 @@ target_compile_options(asr_correct PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_correct PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_fc PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_fc PRIVATE ${SNDFILE_CFLAGS_OTHER})
-target_compile_options(tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
-target_compile_options(tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
+target_compile_options(tts_demo PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
+target_compile_options(tts_demo PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_llm_tts_api PRIVATE ${PORTAUDIO_CFLAGS_OTHER})
@@ -458,7 +450,7 @@ target_compile_options(streaming_asr PRIVATE ${SNDFILE_CFLAGS_OTHER})
 target_compile_options(asr_realtime_test PRIVATE ${SNDFILE_CFLAGS_OTHER})
 
 # Set output directory for all executables
-set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts streaming_asr register_speaker list_speakers asr_realtime_test PROPERTIES
+set_target_properties(asr vad_asr asr_llm asr_correct asr_fc asr_llm_tts asr_llm_tts_api tts_demo streaming_asr register_speaker list_speakers asr_realtime_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -500,7 +492,7 @@ if(USE_MCP)
     endif()
     target_include_directories(asr_llm_tts_mcp PRIVATE ${MCP_INCLUDE_DIR} ${MCP_COMMON_DIR})
     target_link_libraries(asr_llm_tts_mcp ${COMMON_LIBRARIES} mcp)
-    target_link_directories(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS})
+    target_link_directories(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
     target_compile_options(asr_llm_tts_mcp PRIVATE ${PORTAUDIO_CFLAGS_OTHER} ${SNDFILE_CFLAGS_OTHER})
     set_target_properties(asr_llm_tts_mcp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
@@ -547,7 +539,7 @@ if(USE_AEC)
     # Link libraries (including WebRTC)
     target_link_libraries(asr_llm_tts_aec ${COMMON_LIBRARIES} ${WEBRTC_LIB})
 
-    target_link_directories(asr_llm_tts_aec PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS})
+    target_link_directories(asr_llm_tts_aec PRIVATE ${PORTAUDIO_LIBRARY_DIRS} ${SNDFILE_LIBRARY_DIRS} ${FFTW3_LIBRARY_DIRS})
     target_compile_options(asr_llm_tts_aec PRIVATE ${PORTAUDIO_CFLAGS_OTHER} ${SNDFILE_CFLAGS_OTHER})
     set_target_properties(asr_llm_tts_aec PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -566,3 +558,53 @@ if(USE_AEC)
 
     message(STATUS "Building asr_llm_tts_aec with WebRTC AEC support")
 endif()
+
+# ============================================================================
+# voice_chat - 简洁语音对话系统 (使用模块化 stt/tts/audio/vad 库)
+# ============================================================================
+
+# 添加模块化子库
+add_subdirectory(audio)
+add_subdirectory(stt)
+add_subdirectory(tts)
+add_subdirectory(vad)
+
+# Voice Chat 源文件 (使用新的 VAD SDK)
+set(VOICE_CHAT_SOURCES
+    example/main_voice_chat.cpp
+)
+
+add_executable(voice_chat ${VOICE_CHAT_SOURCES})
+
+target_include_directories(voice_chat PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/audio/space_audio/include
+    ${CMAKE_SOURCE_DIR}/audio/resampler/include
+    ${CMAKE_SOURCE_DIR}/stt/inc
+    ${CMAKE_SOURCE_DIR}/tts/inc
+    ${CMAKE_SOURCE_DIR}/vad/inc
+    ${ONNXRUNTIME_INCLUDE_DIR}
+)
+
+target_link_libraries(voice_chat
+    space_audio
+    audio_resampler
+    stt
+    tts
+    vad
+    ${ONNXRUNTIME_LIB}
+    ${CURL_LIBRARIES}
+    pthread
+)
+
+target_link_directories(voice_chat PRIVATE
+    ${PORTAUDIO_LIBRARY_DIRS}
+    ${SNDFILE_LIBRARY_DIRS}
+    ${FFTW3_LIBRARY_DIRS}
+)
+
+set_target_properties(voice_chat PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+message(STATUS "Building voice_chat with modular stt/tts/audio/vad libraries")
