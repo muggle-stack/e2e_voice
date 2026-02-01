@@ -608,3 +608,67 @@ set_target_properties(voice_chat PROPERTIES
 )
 
 message(STATUS "Building voice_chat with modular stt/tts/audio/vad libraries")
+
+# ============================================================================
+# voice_chat_aec - 带回声消除的语音对话系统 (全双工 + WebRTC AEC)
+# ============================================================================
+if(USE_AEC)
+    set(VOICE_CHAT_AEC_SOURCES
+        example/main_voice_chat_aec.cpp
+        src/aec_duplex_processor.cpp
+        src/text_buffer.cpp
+    )
+
+    add_executable(voice_chat_aec ${VOICE_CHAT_AEC_SOURCES})
+
+    target_include_directories(voice_chat_aec PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/audio/space_audio/include
+        ${CMAKE_SOURCE_DIR}/audio/stream/include
+        ${CMAKE_SOURCE_DIR}/audio/resampler/include
+        ${CMAKE_SOURCE_DIR}/stt/inc
+        ${CMAKE_SOURCE_DIR}/tts/inc
+        ${CMAKE_SOURCE_DIR}/vad/inc
+        ${ONNXRUNTIME_INCLUDE_DIR}
+        ${WEBRTC_INCLUDE_DIRS}
+    )
+
+    target_compile_definitions(voice_chat_aec PRIVATE USE_AEC)
+
+    target_link_libraries(voice_chat_aec
+        space_audio
+        audio_resampler
+        stt
+        tts
+        vad
+        ${ONNXRUNTIME_LIB}
+        ${CURL_LIBRARIES}
+        ${WEBRTC_LIB}
+        pthread
+    )
+
+    target_link_directories(voice_chat_aec PRIVATE
+        ${PORTAUDIO_LIBRARY_DIRS}
+        ${SNDFILE_LIBRARY_DIRS}
+        ${FFTW3_LIBRARY_DIRS}
+    )
+
+    set_target_properties(voice_chat_aec PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
+
+    # Set RPATH for WebRTC library
+    if(APPLE)
+        set_target_properties(voice_chat_aec PROPERTIES
+            INSTALL_RPATH "@executable_path/../lib;${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing"
+            BUILD_WITH_INSTALL_RPATH TRUE
+        )
+    else()
+        set_target_properties(voice_chat_aec PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../lib:${WEBRTC_BUILD_DIR}/webrtc/modules/audio_processing"
+            BUILD_WITH_INSTALL_RPATH TRUE
+        )
+    endif()
+
+    message(STATUS "Building voice_chat_aec with WebRTC AEC + full-duplex audio")
+endif()
