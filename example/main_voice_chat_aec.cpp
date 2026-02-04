@@ -1130,6 +1130,9 @@ int main(int argc, char* argv[]) {
     int post_barge_in_cooldown = 0;
     const int COOLDOWN_FRAMES = 15;  // 冷却期 15 帧 (~480ms) 让 AEC 有足够时间重新收敛
 
+    // Barge-in 录音状态（独立于 g_barge_in 生命周期，解决慢速平台音频丢失问题）
+    std::atomic<bool> barge_in_recording{false};
+
     // 音频录制缓冲区（用于调试）
     std::vector<int16_t> recorded_audio;
     std::mutex record_mutex;
@@ -1159,7 +1162,8 @@ int main(int argc, char* argv[]) {
 
             sentence_count++;
             auto result = tts->Call(sentence);
-            if (result && result->IsSuccess()) {
+            // TTS 合成后再次检查 barge-in，避免入队已取消的音频
+            if (result && result->IsSuccess() && !g_barge_in) {
                 auto audio_bytes = result->GetAudioData();
                 if (!audio_bytes.empty()) {
                     auto float_samples = pcm16BytesToFloat(audio_bytes);
@@ -1367,6 +1371,7 @@ int main(int argc, char* argv[]) {
                 silence_frames = 0;
                 is_speaking = false;
             }
+            barge_in_recording = false;  // 正常结束才重置录音状态
             vad_frame_buffer.clear();
             vad->Reset();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1374,6 +1379,7 @@ int main(int argc, char* argv[]) {
         } else {
             std::cout << getTimestamp() << " [TTS] Barge-in 打断，保留音频缓冲区\n";
             g_barge_in = false;
+            // 注意：不重置 barge_in_recording，让音频回调继续累积
         }
 
         g_processing = false;
@@ -1424,6 +1430,25 @@ int main(int argc, char* argv[]) {
 
             // TTS 播放期间：检测 barge-in（需要连续多帧确认，避免假阳性）
             if (g_processing) {
+                // ===== Barge-in 录音模式：持续累积音频直到 g_processing=false =====
+                if (barge_in_recording && is_speaking) {
+                    std::lock_guard<std::mutex> lock(buffer_mutex);
+                    audio_buffer.insert(audio_buffer.end(), vad_frame.begin(), vad_frame.end());
+
+                    // 更新静音检测（但不触发 ASR，等 g_processing=false）
+                    if (vad_prob <= cfg.vad_threshold) {
+                        if (post_barge_in_cooldown > 0) {
+                            post_barge_in_cooldown--;
+                        } else {
+                            silence_frames++;
+                        }
+                    } else {
+                        silence_frames = 0;
+                    }
+                    continue;
+                }
+
+                // ===== 原有 barge-in 检测逻辑 =====
                 if (aec_processor.isPlaying() && vad_prob > cfg.vad_threshold) {
                     barge_in_confirm_frames++;
                     // 在确认期间也累积音频到预缓冲区
@@ -1437,6 +1462,7 @@ int main(int argc, char* argv[]) {
                                   << barge_in_confirm_frames << "帧, prob=" << vad_prob << ")，停止播放\n";
                         aec_processor.clearPlayback();
                         g_barge_in = true;
+                        barge_in_recording = true;  // 开始 barge-in 录音模式
                         barge_in_confirm_frames = 0;
 
                         // 设置冷却期
@@ -1493,6 +1519,7 @@ int main(int argc, char* argv[]) {
 
                 if (silence_frames >= silence_frames_threshold) {
                     is_speaking = false;
+                    barge_in_recording = false;  // 重置 barge-in 录音状态
                     std::cout << "\n" << getTimestamp() << " [VAD] 停止说话，触发识别\n";
 
                     if (audio_buffer.size() > 8000) {
@@ -1563,4 +1590,5 @@ int main(int argc, char* argv[]) {
     std::cout << "\n" << getTimestamp() << " [已退出]\n";
     return 0;
 }
+
 
