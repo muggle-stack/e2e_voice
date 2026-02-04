@@ -5,7 +5,7 @@
  * 支持 barge-in（用户打断 TTS 播放）
  *
  * 用法:
- *   ./voice_chat_aec [--tts zh|en|zh-en] [--model qwen2.5:0.5b] [--input-device 0] [--output-device 0]
+ *   ./voice_chat_aec [--tts zh|en|zh-en] [--model qwen2.5:0.5b] [--input-device 0] [--output-device 0] [--sample-rate 48000]
  */
 
 #include <iostream>
@@ -27,6 +27,7 @@
 #include <ctime>
 #include <cmath>
 #include <fstream>
+#include <set>
 
 // AEC 处理器
 #include "aec_duplex_processor.hpp"
@@ -34,7 +35,7 @@
 // 全双工音频（用于列出设备）
 #include "space_audio_duplex.hpp"
 
-// Resampler (48kHz -> 16kHz)
+// Resampler (AEC rate <-> 16kHz)
 #include "resampler.hpp"
 
 // STT
@@ -51,6 +52,13 @@
 
 // 流式 TTS 分句
 #include "text_buffer.hpp"
+
+// MCP SDK (可选)
+#ifdef USE_MCP
+#include <mcp.h>
+#include <curl/curl.h>
+#include <map>
+#endif
 
 // ============================================================================
 // 时间戳辅助函数
@@ -113,10 +121,14 @@ struct Config {
     bool agc_enabled = false;                  // 默认禁用 AGC，避免低能量信号被激进放大
     int aec_delay_ms = 50;                 // AEC 延迟补偿 (毫秒)
     int buffer_frames = 0;                 // 音频缓冲帧数 (0 = 使用平台默认值)
+    int sample_rate = 48000;               // AEC 采样率 (默认 48000Hz)
 
     // 调试：音频录制
     bool save_audio = false;
     std::string audio_file = "aec_debug.wav";
+
+    // MCP 配置
+    std::string mcp_config_path = "";  // 空 = 不使用 MCP
 };
 
 Config parseArgs(int argc, char* argv[]) {
@@ -144,11 +156,15 @@ Config parseArgs(int argc, char* argv[]) {
             cfg.aec_delay_ms = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "--buffer-frames") == 0 && i + 1 < argc) {
             cfg.buffer_frames = std::stoi(argv[++i]);
+        } else if (strcmp(argv[i], "--sample-rate") == 0 && i + 1 < argc) {
+            cfg.sample_rate = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "--save-audio") == 0) {
             cfg.save_audio = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 cfg.audio_file = argv[++i];
             }
+        } else if (strcmp(argv[i], "--mcp-config") == 0 && i + 1 < argc) {
+            cfg.mcp_config_path = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             std::cout << "用法: " << argv[0] << " [选项]\n"
                       << "\n音频设备:\n"
@@ -166,8 +182,11 @@ Config parseArgs(int argc, char* argv[]) {
                       << "  --agc                     启用自动增益控制 (默认禁用)\n"
                       << "  --aec-delay <ms>          AEC延迟补偿 (默认: 50ms, 范围: 20-100ms)\n"
                       << "  --buffer-frames <n>       音频缓冲帧数 (默认: macOS 480, Linux 960)\n"
+                      << "  --sample-rate <hz>        音频采样率 (默认: 48000, 常用: 44100, 48000)\n"
                       << "\n调试:\n"
                       << "  --save-audio [file]       保存AEC处理后的音频 (默认: aec_debug.wav)\n"
+                      << "\nMCP:\n"
+                      << "  --mcp-config <path>       MCP配置文件 (启用工具调用)\n"
                       << "\n其他:\n"
                       << "  -h, --help                显示帮助\n";
             exit(0);
@@ -175,6 +194,372 @@ Config parseArgs(int argc, char* argv[]) {
     }
     return cfg;
 }
+
+// ============================================================================
+// MCP 配置和 LLM 后端 (可选)
+// ============================================================================
+
+#ifdef USE_MCP
+
+using json = nlohmann::json;
+
+// MCP 配置结构
+struct MCPConfig {
+    std::string backend = "ollama";
+    std::string url = "http://localhost:11434";
+    std::string model = "qwen2.5:0.5b";
+    int timeout = 120;
+    std::string system_prompt = "你是一个智能助手，可以使用工具帮助用户。请用中文回复。";
+    std::string registry_url = "";  // 注册中心 URL (可选)
+    int registry_poll_interval = 5; // 轮询间隔 (秒)
+
+    struct ServerEntry {
+        std::string name;
+        std::string type;  // "stdio", "socket", "http"
+        std::string command;
+        std::vector<std::string> args;
+        std::string socketPath;
+        std::string url;
+    };
+    std::vector<ServerEntry> servers;
+};
+
+// 加载 MCP 配置
+bool loadMCPConfig(const std::string& path, MCPConfig& config) {
+    std::ifstream f(path);
+    if (!f) {
+        std::cerr << getTimestamp() << " [MCP] 无法打开配置文件: " << path << std::endl;
+        return false;
+    }
+
+    try {
+        json j;
+        f >> j;
+
+        if (j.contains("backend")) config.backend = j["backend"];
+        if (j.contains("url")) config.url = j["url"];
+        if (j.contains("model")) config.model = j["model"];
+        if (j.contains("timeout")) config.timeout = j["timeout"];
+        if (j.contains("system_prompt")) config.system_prompt = j["system_prompt"];
+        if (j.contains("registry_url")) config.registry_url = j["registry_url"];
+        if (j.contains("registry_poll_interval")) config.registry_poll_interval = j["registry_poll_interval"];
+
+        if (j.contains("servers")) {
+            for (const auto& srv : j["servers"]) {
+                MCPConfig::ServerEntry entry;
+                entry.name = srv["name"];
+                entry.type = srv.value("type", "http");
+
+                if (entry.type == "stdio") {
+                    entry.command = srv["command"];
+                    if (srv.contains("args")) {
+                        for (const auto& arg : srv["args"]) {
+                            entry.args.push_back(arg);
+                        }
+                    }
+                } else if (entry.type == "http") {
+                    entry.url = srv["url"];
+                } else {
+                    entry.socketPath = srv.value("path", srv.value("socket", ""));
+                }
+                config.servers.push_back(entry);
+            }
+        }
+
+        // 设置默认 URL
+        if (config.url == "http://localhost:11434" && config.backend == "llama") {
+            config.url = "http://localhost:8080";
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << getTimestamp() << " [MCP] 配置解析错误: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// LLM 后端抽象接口
+class LLMBackend {
+public:
+    virtual ~LLMBackend() = default;
+    virtual json convertTools(const json& mcp_tools) = 0;
+    virtual json chatStream(
+        const std::vector<json>& messages,
+        const json& tools,
+        std::function<void(const std::string&)> on_token
+    ) = 0;
+
+protected:
+    struct StreamContext {
+        std::function<void(const std::string&)> callback;
+        std::string buffer;
+    };
+
+    static size_t streamCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+        size_t total = size * nmemb;
+        auto* ctx = static_cast<StreamContext*>(userp);
+        ctx->buffer.append((char*)contents, total);
+
+        size_t pos;
+        while ((pos = ctx->buffer.find('\n')) != std::string::npos) {
+            std::string line = ctx->buffer.substr(0, pos);
+            ctx->buffer.erase(0, pos + 1);
+            if (!line.empty() && ctx->callback) ctx->callback(line);
+        }
+        return total;
+    }
+
+    void httpPostStream(const std::string& url, const std::string& body,
+                        std::function<void(const std::string&)> callback, int timeout) {
+        CURL* curl = curl_easy_init();
+        if (curl) {
+            StreamContext ctx{callback, ""};
+            struct curl_slist* headers = curl_slist_append(nullptr, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout);
+            curl_easy_perform(curl);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        }
+    }
+};
+
+// Ollama 后端
+class OllamaBackend : public LLMBackend {
+public:
+    OllamaBackend(const std::string& url, const std::string& model, int timeout)
+        : url_(url), model_(model), timeout_(timeout) {}
+
+    json convertTools(const json& mcp_tools) override {
+        json tools = json::array();
+        for (const auto& tool : mcp_tools) {
+            tools.push_back({
+                {"type", "function"},
+                {"function", {
+                    {"name", tool["name"]},
+                    {"description", tool["description"]},
+                    {"parameters", tool["inputSchema"]}
+                }}
+            });
+        }
+        return tools;
+    }
+
+    json chatStream(
+        const std::vector<json>& messages,
+        const json& tools,
+        std::function<void(const std::string&)> on_token
+    ) override {
+        json request = {
+            {"model", model_},
+            {"messages", messages},
+            {"stream", true}
+        };
+        if (!tools.empty()) {
+            request["tools"] = tools;
+        }
+
+        std::string full_content;
+        json tool_calls = json::array();
+        bool has_tool_call = false;
+
+        httpPostStream(url_ + "/api/chat", request.dump(), [&](const std::string& chunk) {
+            if (g_barge_in) return;
+            try {
+                json j = json::parse(chunk);
+                if (j.contains("message")) {
+                    auto& msg = j["message"];
+                    if (msg.contains("tool_calls") && !msg["tool_calls"].empty()) {
+                        has_tool_call = true;
+                        tool_calls = msg["tool_calls"];
+                    }
+                    if (msg.contains("content")) {
+                        std::string token = msg["content"];
+                        if (!token.empty() && !has_tool_call) {
+                            full_content += token;
+                            if (on_token) on_token(token);
+                        }
+                    }
+                }
+            } catch (...) {}
+        }, timeout_);
+
+        json result = {{"content", full_content}};
+        if (has_tool_call) result["tool_calls"] = tool_calls;
+        return result;
+    }
+
+private:
+    std::string url_;
+    std::string model_;
+    int timeout_;
+};
+
+// llama.cpp 后端 (OpenAI 兼容)
+class LlamaBackend : public LLMBackend {
+public:
+    LlamaBackend(const std::string& url, const std::string& model, int timeout)
+        : url_(url), model_(model), timeout_(timeout) {}
+
+    json convertTools(const json& mcp_tools) override {
+        json tools = json::array();
+        for (const auto& tool : mcp_tools) {
+            tools.push_back({
+                {"type", "function"},
+                {"function", {
+                    {"name", tool["name"]},
+                    {"description", tool["description"]},
+                    {"parameters", tool["inputSchema"]}
+                }}
+            });
+        }
+        return tools;
+    }
+
+    json chatStream(
+        const std::vector<json>& messages,
+        const json& tools,
+        std::function<void(const std::string&)> on_token
+    ) override {
+        json request = {
+            {"messages", messages},
+            {"stream", true}
+        };
+
+        if (!model_.empty()) {
+            request["model"] = model_;
+        }
+
+        if (!tools.empty()) {
+            request["tools"] = tools;
+            request["tool_choice"] = "auto";
+        }
+
+        std::string full_content;
+        json tool_calls = json::array();
+        std::map<int, json> tool_call_map;
+
+        httpPostStream(url_ + "/v1/chat/completions", request.dump(), [&](const std::string& chunk) {
+            if (g_barge_in) return;
+            std::string data = chunk;
+            if (data.substr(0, 6) == "data: ") {
+                data = data.substr(6);
+            }
+            if (data == "[DONE]" || data.empty()) return;
+
+            try {
+                json j = json::parse(data);
+                if (j.contains("choices") && !j["choices"].empty()) {
+                    auto& delta = j["choices"][0]["delta"];
+
+                    if (delta.contains("content") && !delta["content"].is_null()) {
+                        std::string token = delta["content"];
+                        if (!token.empty()) {
+                            full_content += token;
+                            if (on_token) on_token(token);
+                        }
+                    }
+
+                    if (delta.contains("tool_calls")) {
+                        for (const auto& tc : delta["tool_calls"]) {
+                            int idx = tc.value("index", 0);
+
+                            if (tc.contains("id")) {
+                                tool_call_map[idx] = {
+                                    {"id", tc["id"]},
+                                    {"type", "function"},
+                                    {"function", {{"name", ""}, {"arguments", ""}}}
+                                };
+                            }
+
+                            if (tc.contains("function")) {
+                                if (tc["function"].contains("name")) {
+                                    tool_call_map[idx]["function"]["name"] =
+                                        tool_call_map[idx]["function"]["name"].get<std::string>() +
+                                        tc["function"]["name"].get<std::string>();
+                                }
+                                if (tc["function"].contains("arguments")) {
+                                    tool_call_map[idx]["function"]["arguments"] =
+                                        tool_call_map[idx]["function"]["arguments"].get<std::string>() +
+                                        tc["function"]["arguments"].get<std::string>();
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+        }, timeout_);
+
+        for (const auto& [idx, tc] : tool_call_map) {
+            tool_calls.push_back(tc);
+        }
+
+        json result = {{"content", full_content}};
+        if (!tool_calls.empty()) {
+            result["tool_calls"] = tool_calls;
+        }
+        return result;
+    }
+
+private:
+    std::string url_;
+    std::string model_;
+    int timeout_;
+};
+
+// 工具列表转换辅助函数
+json convertToolsToJson(const std::vector<mcp::Tool>& tools) {
+    json arr = json::array();
+    for (const auto& t : tools) {
+        arr.push_back(t.toJson());
+    }
+    return arr;
+}
+
+// 从注册中心获取服务列表
+std::vector<MCPConfig::ServerEntry> fetchServicesFromRegistry(const std::string& registry_url) {
+    std::vector<MCPConfig::ServerEntry> services;
+    if (registry_url.empty()) return services;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) return services;
+
+    std::string response_data;
+    curl_easy_setopt(curl, CURLOPT_URL, registry_url.c_str());
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);  // 强制 IPv4，避免 Linux IPv6 问题
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](void* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
+        ((std::string*)userdata)->append((char*)ptr, size * nmemb);
+        return size * nmemb;
+    });
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) return services;
+
+    try {
+        json j = json::parse(response_data);
+        if (j.contains("services")) {
+            for (const auto& srv : j["services"]) {
+                MCPConfig::ServerEntry entry;
+                entry.name = srv["name"];
+                entry.type = srv.value("type", "http");
+                entry.url = srv.value("url", "");
+                services.push_back(entry);
+            }
+        }
+    } catch (...) {}
+
+    return services;
+}
+
+#endif // USE_MCP
 
 // ============================================================================
 // 列出音频设备
@@ -305,10 +690,14 @@ void callOpenAICompatibleAPI(
 // 重采样工具
 // ============================================================================
 
-std::vector<float> resample48kTo16k(const float* data, size_t frames) {
-    // 48kHz -> 16kHz = 3:1，使用线性插值避免混叠
-    const double ratio = 3.0;
-    size_t output_frames = frames / 3;
+std::vector<float> resampleToVad(const float* data, size_t frames, int from_rate) {
+    // 从 AEC 采样率重采样到 16kHz (VAD/ASR)
+    if (from_rate == 16000) {
+        return std::vector<float>(data, data + frames);
+    }
+
+    const double ratio = static_cast<double>(from_rate) / 16000.0;
+    size_t output_frames = static_cast<size_t>(frames / ratio);
     std::vector<float> output(output_frames);
 
     for (size_t i = 0; i < output_frames; ++i) {
@@ -329,10 +718,11 @@ std::vector<float> resample48kTo16k(const float* data, size_t frames) {
     return output;
 }
 
-std::vector<float> resampleTo48k(const std::vector<float>& input, int from_rate) {
-    if (from_rate == 48000) return input;
+std::vector<float> resampleToAec(const std::vector<float>& input, int from_rate, int to_rate) {
+    // 从 TTS 采样率重采样到 AEC 采样率
+    if (from_rate == to_rate) return input;
 
-    double ratio = 48000.0 / from_rate;
+    double ratio = static_cast<double>(to_rate) / from_rate;
     size_t output_size = static_cast<size_t>(input.size() * ratio);
     std::vector<float> output(output_size);
 
@@ -441,7 +831,7 @@ int main(int argc, char* argv[]) {
     std::cout << getTimestamp() << " AEC延迟补偿: " << cfg.aec_delay_ms << " ms\n";
     std::cout << getTimestamp() << " 噪声抑制: " << (cfg.ns_enabled ? "ON" : "OFF") << "\n";
     std::cout << getTimestamp() << " AGC: " << (cfg.agc_enabled ? "ON" : "OFF") << "\n";
-    std::cout << getTimestamp() << " 采样率: 48000 Hz (AEC) -> 16000 Hz (VAD/ASR)\n";
+    std::cout << getTimestamp() << " 采样率: " << cfg.sample_rate << " Hz (AEC) -> 16000 Hz (VAD/ASR)\n";
     std::cout << getTimestamp() << " 按 Ctrl+C 退出\n";
     std::cout << getTimestamp() << " ========================================\n\n";
 
@@ -531,7 +921,7 @@ int main(int argc, char* argv[]) {
     std::cout << getTimestamp() << " [5/5] 初始化 AEC 音频处理器..." << std::flush;
 
     AecDuplexProcessor::Config aec_cfg;
-    aec_cfg.sample_rate = 48000;
+    aec_cfg.sample_rate = cfg.sample_rate;
     aec_cfg.channels = 1;
     // 使用用户指定的缓冲帧数，或平台默认值
     if (cfg.buffer_frames > 0) {
@@ -551,6 +941,172 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << " OK\n\n";
+
+    // -------------------------------------------------------------------------
+    // 6. 初始化 MCP (可选)
+    // -------------------------------------------------------------------------
+#ifdef USE_MCP
+    MCPConfig mcp_cfg;
+    bool mcp_enabled = false;
+    std::unique_ptr<mcp::MCPManager> mcp_manager;
+    std::unique_ptr<LLMBackend> llm_backend;
+    json llm_tools;
+    std::vector<json> conversation_messages;
+    std::thread registry_poll_thread;
+    std::mutex tools_mutex;  // 保护 llm_tools 更新
+    std::set<std::string> known_servers;  // 已知服务器集合
+
+    if (!cfg.mcp_config_path.empty()) {
+        std::cout << getTimestamp() << " [MCP] 加载配置: " << cfg.mcp_config_path << "\n";
+
+        if (loadMCPConfig(cfg.mcp_config_path, mcp_cfg)) {
+            mcp_enabled = true;
+
+            // 创建 LLM 后端
+            if (mcp_cfg.backend == "llama") {
+                llm_backend = std::make_unique<LlamaBackend>(mcp_cfg.url, mcp_cfg.model, mcp_cfg.timeout);
+                std::cout << getTimestamp() << " [MCP] LLM后端: llama.cpp (" << mcp_cfg.url << ")\n";
+            } else {
+                llm_backend = std::make_unique<OllamaBackend>(mcp_cfg.url, mcp_cfg.model, mcp_cfg.timeout);
+                std::cout << getTimestamp() << " [MCP] LLM后端: Ollama (" << mcp_cfg.url << ")\n";
+            }
+            std::cout << getTimestamp() << " [MCP] 模型: " << mcp_cfg.model << "\n";
+
+            // 初始化 MCP Manager
+            mcp_manager = std::make_unique<mcp::MCPManager>();
+
+            for (const auto& srv : mcp_cfg.servers) {
+                known_servers.insert(srv.name);
+                if (srv.type == "http") {
+                    mcp::HttpConfig hc;
+                    hc.url = srv.url;
+                    mcp_manager->addHttpServer(srv.name, hc);
+                    std::cout << getTimestamp() << " [MCP] 添加服务器: " << srv.name << " (http: " << srv.url << ")\n";
+                } else if (srv.type == "stdio") {
+                    mcp::StdioConfig sc;
+                    sc.command = srv.command;
+                    sc.args = srv.args;
+                    mcp_manager->addStdioServer(srv.name, sc);
+                    std::cout << getTimestamp() << " [MCP] 添加服务器: " << srv.name << " (stdio: " << srv.command << ")\n";
+                } else if (srv.type == "socket") {
+                    mcp::UnixSocketConfig uc;
+                    uc.socketPath = srv.socketPath;
+                    mcp_manager->addUnixSocketServer(srv.name, uc);
+                    std::cout << getTimestamp() << " [MCP] 添加服务器: " << srv.name << " (socket: " << srv.socketPath << ")\n";
+                }
+            }
+
+            // 从注册中心获取初始服务列表（如果配置了）
+            if (!mcp_cfg.registry_url.empty()) {
+                std::cout << getTimestamp() << " [MCP] 从注册中心获取服务: " << mcp_cfg.registry_url << "\n";
+                auto registry_services = fetchServicesFromRegistry(mcp_cfg.registry_url);
+                for (const auto& srv : registry_services) {
+                    if (known_servers.find(srv.name) == known_servers.end()) {
+                        known_servers.insert(srv.name);
+                        mcp::HttpConfig hc;
+                        hc.url = srv.url;
+                        mcp_manager->addHttpServer(srv.name, hc);
+                        std::cout << getTimestamp() << " [MCP] 添加服务器: " << srv.name << " (http: " << srv.url << ")\n";
+                    }
+                }
+            }
+
+            // 启动服务器
+            std::cout << getTimestamp() << " [MCP] 启动服务器...\n";
+            mcp_manager->startAll();
+
+            if (mcp_manager->waitForAnyServer(std::chrono::milliseconds(10000))) {
+                // 获取工具列表
+                auto tools = mcp_manager->getAllTools();
+                llm_tools = llm_backend->convertTools(convertToolsToJson(tools));
+                std::cout << getTimestamp() << " [MCP] 已连接 " << mcp_manager->readyServerCount()
+                          << " 个服务器, " << tools.size() << " 个工具\n";
+            } else {
+                std::cout << getTimestamp() << " [MCP] 警告: 无可用服务器，继续等待...\n";
+            }
+
+            // 初始化对话消息（使用配置的 system_prompt）
+            conversation_messages.push_back({{"role", "system"}, {"content", mcp_cfg.system_prompt}});
+
+            // 启动注册中心轮询线程（如果配置了 registry_url）
+            if (!mcp_cfg.registry_url.empty()) {
+                std::cout << getTimestamp() << " [MCP] 启动注册中心轮询: " << mcp_cfg.registry_url << "\n";
+                registry_poll_thread = std::thread([&]() {
+                    while (g_running) {
+                        auto services = fetchServicesFromRegistry(mcp_cfg.registry_url);
+
+                        // 构建当前注册中心的服务名集合
+                        std::set<std::string> registry_services;
+                        std::map<std::string, std::string> service_urls;
+                        for (const auto& srv : services) {
+                            registry_services.insert(srv.name);
+                            service_urls[srv.name] = srv.url;
+                        }
+
+                        // 1. 检查已知服务是否断开或需要移除
+                        std::vector<std::string> to_remove;
+                        for (const auto& name : known_servers) {
+                            auto status = mcp_manager->getStatus(name);
+
+                            // 服务不在注册中心且已断开 -> 移除
+                            if (registry_services.find(name) == registry_services.end()) {
+                                if (status.state == mcp::ServerState::Error ||
+                                    status.state == mcp::ServerState::Disconnected) {
+                                    to_remove.push_back(name);
+                                    std::cout << "\n" << getTimestamp() << " [MCP] 服务已下线: " << name << "\n";
+                                }
+                            }
+                            // 服务在注册中心但状态异常 -> 尝试重连
+                            else if (status.state == mcp::ServerState::Error ||
+                                     status.state == mcp::ServerState::Disconnected) {
+                                std::cout << "\n" << getTimestamp() << " [MCP] 尝试重连: " << name << "\n";
+                                mcp_manager->startServer(name);
+                            }
+                        }
+
+                        // 移除已下线的服务
+                        for (const auto& name : to_remove) {
+                            mcp_manager->removeServer(name);
+                            known_servers.erase(name);
+                        }
+
+                        // 2. 发现并添加新服务
+                        bool new_services_added = false;
+                        for (const auto& srv : services) {
+                            if (known_servers.find(srv.name) == known_servers.end()) {
+                                // 发现新服务
+                                mcp::HttpConfig hc;
+                                hc.url = srv.url;
+                                mcp_manager->addHttpServer(srv.name, hc);
+                                mcp_manager->startServer(srv.name);
+                                known_servers.insert(srv.name);
+                                new_services_added = true;
+                                std::cout << "\n" << getTimestamp() << " [MCP] 发现新服务: " << srv.name << " (" << srv.url << ")\n";
+                            }
+                        }
+
+                        // 3. 更新工具列表（如果有变化）
+                        if (!to_remove.empty() || new_services_added) {
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                            {
+                                std::lock_guard<std::mutex> lock(tools_mutex);
+                                auto tools = mcp_manager->getAllTools();
+                                llm_tools = llm_backend->convertTools(convertToolsToJson(tools));
+                                std::cout << getTimestamp() << " [MCP] 工具列表已更新: " << tools.size() << " 个工具\n";
+                            }
+                        }
+
+                        std::this_thread::sleep_for(std::chrono::seconds(mcp_cfg.registry_poll_interval));
+                    }
+                });
+            }
+
+            std::cout << getTimestamp() << " [MCP] 初始化完成\n\n";
+        } else {
+            std::cout << getTimestamp() << " [MCP] 配置加载失败，使用默认 LLM\n\n";
+        }
+    }
+#endif // USE_MCP
 
     // -------------------------------------------------------------------------
     // 状态变量
@@ -592,8 +1148,6 @@ int main(int argc, char* argv[]) {
         g_barge_in = false;
 
         std::cout << "\n" << getTimestamp() << " [你]: " << text << "\n";
-        std::cout << getTimestamp() << " [LLM] 开始生成...\n";
-        std::cout << getTimestamp() << " [AI]: " << std::flush;
 
         TextBuffer text_buffer;
         std::string full_response;
@@ -609,77 +1163,189 @@ int main(int argc, char* argv[]) {
                 auto audio_bytes = result->GetAudioData();
                 if (!audio_bytes.empty()) {
                     auto float_samples = pcm16BytesToFloat(audio_bytes);
-                    auto audio_48k = resampleTo48k(float_samples, tts_sample_rate);
-                    aec_processor.enqueuePlayback(audio_48k, 48000);
+                    auto audio_aec = resampleToAec(float_samples, tts_sample_rate, cfg.sample_rate);
+                    aec_processor.enqueuePlayback(audio_aec, cfg.sample_rate);
                 }
             }
         };
 
-        try {
-            if (!cfg.llm_url.empty()) {
-                // OpenAI 兼容 API
-                callOpenAICompatibleAPI(cfg.llm_url, cfg.llm_model, text, cfg.max_tokens,
-                    [&](const std::string& chunk) -> bool {
-                        if (g_barge_in) return false;  // Barge-in 时停止 LLM
+#ifdef USE_MCP
+        // MCP 模式：支持工具调用
+        if (mcp_enabled && llm_backend) {
+            // 添加用户消息
+            conversation_messages.push_back({{"role", "user"}, {"content", text}});
 
-                        if (!chunk.empty()) {
-                            std::cout << chunk << std::flush;
-                            full_response += chunk;
-                            text_buffer.addText(chunk);
+            const int MAX_TOOL_ROUNDS = 10;
+            int round = 0;
 
-                            // 检测完整句子并立即 TTS
-                            while (text_buffer.hasSentence() && !g_barge_in) {
-                                std::string sentence = text_buffer.getNextSentence();
-                                synthesizeSentence(sentence);
-                            }
+            while (round++ < MAX_TOOL_ROUNDS && g_running && !g_barge_in) {
+                std::cout << getTimestamp() << " [LLM] 第 " << round << " 轮...\n";
+                std::cout << getTimestamp() << " [AI]: " << std::flush;
+
+                // 获取当前工具列表（可能被轮询线程更新）
+                json current_tools;
+                {
+                    std::lock_guard<std::mutex> lock(tools_mutex);
+                    current_tools = llm_tools;
+                }
+
+                // 调用 LLM
+                json result = llm_backend->chatStream(
+                    conversation_messages,
+                    current_tools,
+                    [&](const std::string& token) {
+                        if (g_barge_in) return;
+                        std::cout << token << std::flush;
+                        full_response += token;
+                        text_buffer.addText(token);
+
+                        // 检测完整句子并立即 TTS
+                        while (text_buffer.hasSentence() && !g_barge_in) {
+                            std::string sentence = text_buffer.getNextSentence();
+                            synthesizeSentence(sentence);
                         }
-                        return g_running && !g_barge_in;
+                    }
+                );
+
+                std::cout << std::endl;
+                std::string content = result.value("content", "");
+
+                // 检查是否有工具调用
+                if (result.contains("tool_calls") && !result["tool_calls"].empty()) {
+                    std::cout << getTimestamp() << " [Tool Call] 检测到工具调用\n";
+
+                    // 添加 assistant 消息（带 tool_calls）
+                    conversation_messages.push_back({
+                        {"role", "assistant"},
+                        {"content", content},
+                        {"tool_calls", result["tool_calls"]}
                     });
-            } else {
-                // Ollama
-                ollama::options opts;
-                opts["num_predict"] = cfg.max_tokens;
-                opts["temperature"] = 0.7;
 
-                ollama::generate(cfg.llm_model, text,
-                    [&](const ollama::response& r) -> bool {
-                        if (g_barge_in) return false;  // Barge-in 时停止 LLM
+                    // 执行每个工具调用（不进行 TTS）
+                    for (const auto& tc : result["tool_calls"]) {
+                        std::string tool_name = tc["function"]["name"];
+                        json tool_args = tc["function"]["arguments"];
 
-                        std::string chunk = r.as_simple_string();
-                        if (!chunk.empty()) {
-                            std::cout << chunk << std::flush;
-                            full_response += chunk;
-                            text_buffer.addText(chunk);
-
-                            // 检测完整句子并立即 TTS
-                            while (text_buffer.hasSentence() && !g_barge_in) {
-                                std::string sentence = text_buffer.getNextSentence();
-                                synthesizeSentence(sentence);
-                            }
+                        // 如果 arguments 是字符串，解析它
+                        if (tool_args.is_string()) {
+                            try {
+                                tool_args = json::parse(tool_args.get<std::string>());
+                            } catch (...) {}
                         }
-                        return g_running && !g_barge_in;
-                    }, opts);
-            }
-        } catch (const std::exception& e) {
-            // 区分 barge-in 中断和真正的错误
-            if (g_barge_in) {
-                std::cout << "\n" << getTimestamp() << " [LLM] 已因 barge-in 中断生成\n";
-            } else {
-                std::cerr << "\n" << getTimestamp() << " [LLM错误] " << e.what() << std::endl;
-            }
-            g_processing = false;
-            return;
-        }
 
-        std::cout << std::endl;
+                        std::string server = mcp_manager->findServerForTool(tool_name);
+                        std::cout << getTimestamp() << " [MCP] 调用: " << tool_name
+                                  << " @ " << server << " 参数: " << tool_args.dump() << std::endl;
 
-        // 处理 LLM 结束后可能残留的不完整句子
-        if (!g_barge_in) {
-            // 强制获取最后一个可能不完整的句子
-            text_buffer.stop();
-            std::string remaining = text_buffer.getNextSentence();
-            if (!remaining.empty()) {
-                synthesizeSentence(remaining);
+                        auto tool_result = mcp_manager->callTool(tool_name, tool_args);
+
+                        std::string result_text;
+                        if (tool_result.success && !tool_result.contents.empty()) {
+                            result_text = tool_result.contents[0];
+                        } else if (!tool_result.error.empty()) {
+                            result_text = "错误: " + tool_result.error;
+                        } else {
+                            result_text = tool_result.rawResult.dump();
+                        }
+
+                        std::cout << getTimestamp() << " [MCP] 结果: " << result_text << std::endl;
+
+                        // 添加 tool 消息
+                        json tool_msg = {{"role", "tool"}, {"content", result_text}};
+                        if (mcp_cfg.backend == "llama" && tc.contains("id")) {
+                            tool_msg["tool_call_id"] = tc["id"];
+                        }
+                        conversation_messages.push_back(tool_msg);
+                    }
+
+                    // 清理文本缓冲区，准备下一轮
+                    full_response.clear();
+                    text_buffer.clear();
+                    continue;  // 继续下一轮
+                }
+
+                // 没有工具调用，添加最终响应
+                conversation_messages.push_back({{"role", "assistant"}, {"content", content}});
+
+                // 处理残留句子
+                if (!g_barge_in) {
+                    text_buffer.stop();
+                    std::string remaining = text_buffer.getNextSentence();
+                    if (!remaining.empty()) {
+                        synthesizeSentence(remaining);
+                    }
+                }
+                break;
+            }
+        } else
+#endif // USE_MCP
+        {
+            // 非 MCP 模式：原有逻辑
+            std::cout << getTimestamp() << " [LLM] 开始生成...\n";
+            std::cout << getTimestamp() << " [AI]: " << std::flush;
+
+            try {
+                if (!cfg.llm_url.empty()) {
+                    // OpenAI 兼容 API
+                    callOpenAICompatibleAPI(cfg.llm_url, cfg.llm_model, text, cfg.max_tokens,
+                        [&](const std::string& chunk) -> bool {
+                            if (g_barge_in) return false;
+
+                            if (!chunk.empty()) {
+                                std::cout << chunk << std::flush;
+                                full_response += chunk;
+                                text_buffer.addText(chunk);
+
+                                while (text_buffer.hasSentence() && !g_barge_in) {
+                                    std::string sentence = text_buffer.getNextSentence();
+                                    synthesizeSentence(sentence);
+                                }
+                            }
+                            return g_running && !g_barge_in;
+                        });
+                } else {
+                    // Ollama
+                    ollama::options opts;
+                    opts["num_predict"] = cfg.max_tokens;
+                    opts["temperature"] = 0.7;
+
+                    ollama::generate(cfg.llm_model, text,
+                        [&](const ollama::response& r) -> bool {
+                            if (g_barge_in) return false;
+
+                            std::string chunk = r.as_simple_string();
+                            if (!chunk.empty()) {
+                                std::cout << chunk << std::flush;
+                                full_response += chunk;
+                                text_buffer.addText(chunk);
+
+                                while (text_buffer.hasSentence() && !g_barge_in) {
+                                    std::string sentence = text_buffer.getNextSentence();
+                                    synthesizeSentence(sentence);
+                                }
+                            }
+                            return g_running && !g_barge_in;
+                        }, opts);
+                }
+            } catch (const std::exception& e) {
+                if (g_barge_in) {
+                    std::cout << "\n" << getTimestamp() << " [LLM] 已因 barge-in 中断生成\n";
+                } else {
+                    std::cerr << "\n" << getTimestamp() << " [LLM错误] " << e.what() << std::endl;
+                }
+                g_processing = false;
+                return;
+            }
+
+            std::cout << std::endl;
+
+            // 处理残留句子
+            if (!g_barge_in) {
+                text_buffer.stop();
+                std::string remaining = text_buffer.getNextSentence();
+                if (!remaining.empty()) {
+                    synthesizeSentence(remaining);
+                }
             }
         }
 
@@ -687,14 +1353,13 @@ int main(int argc, char* argv[]) {
             std::cout << getTimestamp() << " [TTS] 流式合成完成 (" << sentence_count << " 句)\n";
         }
 
-        // 等待播放完成（barge-in 会在 VAD 中自动触发 clearPlayback）
+        // 等待播放完成
         while (aec_processor.isPlaying() && g_running && !g_barge_in) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
-        // 只有在非 barge-in 情况下才清理缓冲区
+        // 清理缓冲区
         if (!g_barge_in) {
-            // TTS 播放完成后清理音频缓冲区，防止旧音频被识别
             {
                 std::lock_guard<std::mutex> lock(buffer_mutex);
                 audio_buffer.clear();
@@ -702,15 +1367,13 @@ int main(int argc, char* argv[]) {
                 silence_frames = 0;
                 is_speaking = false;
             }
-            vad_frame_buffer.clear();  // 清空 VAD 帧缓冲区
-            vad->Reset();  // 重置 VAD 状态
-            // 短暂冷却期，让 AEC 稳定
+            vad_frame_buffer.clear();
+            vad->Reset();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::cout << getTimestamp() << " [TTS] 播放完成，缓冲区已清理\n";
         } else {
-            // Barge-in 情况下，不清理缓冲区，让用户的语音继续被累积
             std::cout << getTimestamp() << " [TTS] Barge-in 打断，保留音频缓冲区\n";
-            g_barge_in = false;  // 重置标志
+            g_barge_in = false;
         }
 
         g_processing = false;
@@ -720,11 +1383,11 @@ int main(int argc, char* argv[]) {
     // -------------------------------------------------------------------------
     // 设置 AEC 处理器回调
     // -------------------------------------------------------------------------
-    aec_processor.setAudioCallback([&](const float* data, size_t frames, int sample_rate) {
+    aec_processor.setAudioCallback([&](const float* data, size_t frames, int /*sample_rate*/) {
         if (!g_running) return;
 
         // 降采样到 16kHz 给 VAD/ASR
-        auto samples_16k = resample48kTo16k(data, frames);
+        auto samples_16k = resampleToVad(data, frames, cfg.sample_rate);
         if (samples_16k.empty()) return;
 
         // 录制音频（用于调试）
@@ -748,9 +1411,9 @@ int main(int argc, char* argv[]) {
             auto vad_result = vad->Detect(vad_frame);
             float vad_prob = vad_result ? vad_result->GetProbability() : 0.0f;
 
-            // 每10帧打印一次 VAD 状态
+            // 每10帧打印一次 VAD 状态（仅在非处理期间）
             frame_count++;
-            if (frame_count % 10 == 0) {
+            if (frame_count % 10 == 0 && !g_processing) {
                 std::cout << "\r" << getTimestamp() << " [VAD] prob=" << std::fixed
                           << std::setprecision(2) << vad_prob
                           << " speaking=" << (is_speaking ? "Y" : "N")
@@ -876,6 +1539,19 @@ int main(int argc, char* argv[]) {
     // 清理
     aec_processor.stop();
 
+#ifdef USE_MCP
+    // 清理 MCP 资源
+    if (mcp_enabled) {
+        if (registry_poll_thread.joinable()) {
+            registry_poll_thread.join();
+        }
+        if (mcp_manager) {
+            mcp_manager->stopAll();
+        }
+        std::cout << getTimestamp() << " [MCP] 已清理\n";
+    }
+#endif
+
     // 保存录制的音频
     if (cfg.save_audio && !recorded_audio.empty()) {
         std::cout << getTimestamp() << " [保存音频] " << cfg.audio_file
@@ -887,3 +1563,4 @@ int main(int argc, char* argv[]) {
     std::cout << "\n" << getTimestamp() << " [已退出]\n";
     return 0;
 }
+

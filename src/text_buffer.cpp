@@ -43,7 +43,20 @@ void TextBuffer::clear() {
 }
 
 void TextBuffer::stop() {
+    std::lock_guard<std::mutex> lock(mutex_);
     stop_flag_ = true;
+
+    // 将残留的 buffer_ 作为最后一个句子
+    if (!buffer_.empty()) {
+        std::string trimmed = buffer_;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t\n\r"));
+        trimmed.erase(trimmed.find_last_not_of(" \t\n\r") + 1);
+        if (!trimmed.empty()) {
+            sentences_.push(trimmed);
+        }
+        buffer_.clear();
+    }
+
     cv_.notify_all();
 }
 

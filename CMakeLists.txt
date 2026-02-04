@@ -105,13 +105,11 @@ else()
     message(FATAL_ERROR "OpenSSL not found. Please install with: brew install openssl")
 endif()
 
-# Add cpp-mcp library
+# Add mcp library (Model Context Protocol)
 option(USE_MCP "Enable MCP (Model Context Protocol) support" OFF)
 if(USE_MCP)
-    set(MCP_BUILD_TESTS OFF CACHE BOOL "Disable MCP tests" FORCE)
-    add_subdirectory(third_party/cpp-mcp)
-    set(MCP_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-mcp/include)
-    set(MCP_COMMON_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-mcp/common)
+    set(MCP_BUILD_EXAMPLES OFF CACHE BOOL "Disable MCP examples" FORCE)
+    add_subdirectory(mcp)
     message(STATUS "MCP support enabled")
 endif()
 
@@ -671,4 +669,14 @@ if(USE_AEC)
     endif()
 
     message(STATUS "Building voice_chat_aec with WebRTC AEC + full-duplex audio")
+
+    # 可选 MCP 支持
+    if(USE_MCP)
+        target_compile_definitions(voice_chat_aec PRIVATE USE_MCP)
+        target_include_directories(voice_chat_aec PRIVATE
+            ${CMAKE_SOURCE_DIR}/mcp/inc
+        )
+        target_link_libraries(voice_chat_aec mcp_static)
+        message(STATUS "  + MCP support enabled for voice_chat_aec")
+    endif()
 endif()
