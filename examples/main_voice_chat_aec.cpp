@@ -48,7 +48,7 @@
 #include "SpaceVadSDK.h"
 
 // LLM
-#include "ollama.hpp"
+#include "SpaceLlmSDK.h"
 
 // 流式 TTS 分句
 #include "text_buffer.hpp"
@@ -278,246 +278,21 @@ bool loadMCPConfig(const std::string& path, MCPConfig& config) {
     }
 }
 
-// LLM 后端抽象接口
-class LLMBackend {
-public:
-    virtual ~LLMBackend() = default;
-    virtual json convertTools(const json& mcp_tools) = 0;
-    virtual json chatStream(
-        const std::vector<json>& messages,
-        const json& tools,
-        std::function<void(const std::string&)> on_token
-    ) = 0;
-
-protected:
-    struct StreamContext {
-        std::function<void(const std::string&)> callback;
-        std::string buffer;
-    };
-
-    static size_t streamCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-        size_t total = size * nmemb;
-        auto* ctx = static_cast<StreamContext*>(userp);
-        ctx->buffer.append((char*)contents, total);
-
-        size_t pos;
-        while ((pos = ctx->buffer.find('\n')) != std::string::npos) {
-            std::string line = ctx->buffer.substr(0, pos);
-            ctx->buffer.erase(0, pos + 1);
-            if (!line.empty() && ctx->callback) ctx->callback(line);
-        }
-        return total;
-    }
-
-    void httpPostStream(const std::string& url, const std::string& body,
-                        std::function<void(const std::string&)> callback, int timeout) {
-        CURL* curl = curl_easy_init();
-        if (curl) {
-            StreamContext ctx{callback, ""};
-            struct curl_slist* headers = curl_slist_append(nullptr, "Content-Type: application/json");
-            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout);
-            curl_easy_perform(curl);
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-        }
-    }
-};
-
-// Ollama 后端
-class OllamaBackend : public LLMBackend {
-public:
-    OllamaBackend(const std::string& url, const std::string& model, int timeout)
-        : url_(url), model_(model), timeout_(timeout) {}
-
-    json convertTools(const json& mcp_tools) override {
-        json tools = json::array();
-        for (const auto& tool : mcp_tools) {
-            tools.push_back({
-                {"type", "function"},
-                {"function", {
-                    {"name", tool["name"]},
-                    {"description", tool["description"]},
-                    {"parameters", tool["inputSchema"]}
-                }}
-            });
-        }
-        return tools;
-    }
-
-    json chatStream(
-        const std::vector<json>& messages,
-        const json& tools,
-        std::function<void(const std::string&)> on_token
-    ) override {
-        json request = {
-            {"model", model_},
-            {"messages", messages},
-            {"stream", true}
-        };
-        if (!tools.empty()) {
-            request["tools"] = tools;
-        }
-
-        std::string full_content;
-        json tool_calls = json::array();
-        bool has_tool_call = false;
-
-        httpPostStream(url_ + "/api/chat", request.dump(), [&](const std::string& chunk) {
-            if (g_barge_in) return;
-            try {
-                json j = json::parse(chunk);
-                if (j.contains("message")) {
-                    auto& msg = j["message"];
-                    if (msg.contains("tool_calls") && !msg["tool_calls"].empty()) {
-                        has_tool_call = true;
-                        tool_calls = msg["tool_calls"];
-                    }
-                    if (msg.contains("content")) {
-                        std::string token = msg["content"];
-                        if (!token.empty() && !has_tool_call) {
-                            full_content += token;
-                            if (on_token) on_token(token);
-                        }
-                    }
-                }
-            } catch (...) {}
-        }, timeout_);
-
-        json result = {{"content", full_content}};
-        if (has_tool_call) result["tool_calls"] = tool_calls;
-        return result;
-    }
-
-private:
-    std::string url_;
-    std::string model_;
-    int timeout_;
-};
-
-// llama.cpp 后端 (OpenAI 兼容)
-class LlamaBackend : public LLMBackend {
-public:
-    LlamaBackend(const std::string& url, const std::string& model, int timeout)
-        : url_(url), model_(model), timeout_(timeout) {}
-
-    json convertTools(const json& mcp_tools) override {
-        json tools = json::array();
-        for (const auto& tool : mcp_tools) {
-            tools.push_back({
-                {"type", "function"},
-                {"function", {
-                    {"name", tool["name"]},
-                    {"description", tool["description"]},
-                    {"parameters", tool["inputSchema"]}
-                }}
-            });
-        }
-        return tools;
-    }
-
-    json chatStream(
-        const std::vector<json>& messages,
-        const json& tools,
-        std::function<void(const std::string&)> on_token
-    ) override {
-        json request = {
-            {"messages", messages},
-            {"stream", true}
-        };
-
-        if (!model_.empty()) {
-            request["model"] = model_;
-        }
-
-        if (!tools.empty()) {
-            request["tools"] = tools;
-            request["tool_choice"] = "auto";
-        }
-
-        std::string full_content;
-        json tool_calls = json::array();
-        std::map<int, json> tool_call_map;
-
-        httpPostStream(url_ + "/v1/chat/completions", request.dump(), [&](const std::string& chunk) {
-            if (g_barge_in) return;
-            std::string data = chunk;
-            if (data.substr(0, 6) == "data: ") {
-                data = data.substr(6);
-            }
-            if (data == "[DONE]" || data.empty()) return;
-
-            try {
-                json j = json::parse(data);
-                if (j.contains("choices") && !j["choices"].empty()) {
-                    auto& delta = j["choices"][0]["delta"];
-
-                    if (delta.contains("content") && !delta["content"].is_null()) {
-                        std::string token = delta["content"];
-                        if (!token.empty()) {
-                            full_content += token;
-                            if (on_token) on_token(token);
-                        }
-                    }
-
-                    if (delta.contains("tool_calls")) {
-                        for (const auto& tc : delta["tool_calls"]) {
-                            int idx = tc.value("index", 0);
-
-                            if (tc.contains("id")) {
-                                tool_call_map[idx] = {
-                                    {"id", tc["id"]},
-                                    {"type", "function"},
-                                    {"function", {{"name", ""}, {"arguments", ""}}}
-                                };
-                            }
-
-                            if (tc.contains("function")) {
-                                if (tc["function"].contains("name")) {
-                                    tool_call_map[idx]["function"]["name"] =
-                                        tool_call_map[idx]["function"]["name"].get<std::string>() +
-                                        tc["function"]["name"].get<std::string>();
-                                }
-                                if (tc["function"].contains("arguments")) {
-                                    tool_call_map[idx]["function"]["arguments"] =
-                                        tool_call_map[idx]["function"]["arguments"].get<std::string>() +
-                                        tc["function"]["arguments"].get<std::string>();
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (...) {}
-        }, timeout_);
-
-        for (const auto& [idx, tc] : tool_call_map) {
-            tool_calls.push_back(tc);
-        }
-
-        json result = {{"content", full_content}};
-        if (!tool_calls.empty()) {
-            result["tool_calls"] = tool_calls;
-        }
-        return result;
-    }
-
-private:
-    std::string url_;
-    std::string model_;
-    int timeout_;
-};
-
-// 工具列表转换辅助函数
-json convertToolsToJson(const std::vector<mcp::Tool>& tools) {
+// MCP 工具转换：将 MCP 工具列表转换为 OpenAI 格式 JSON 字符串
+std::string convertMCPToolsToString(const std::vector<mcp::Tool>& tools) {
     json arr = json::array();
     for (const auto& t : tools) {
-        arr.push_back(t.toJson());
+        json tool_json = t.toJson();
+        arr.push_back({
+            {"type", "function"},
+            {"function", {
+                {"name", tool_json["name"]},
+                {"description", tool_json["description"]},
+                {"parameters", tool_json["inputSchema"]}
+            }}
+        });
     }
-    return arr;
+    return arr.dump();
 }
 
 // 从注册中心获取服务列表
@@ -593,97 +368,6 @@ void listAudioDevices() {
     std::cout << getTimestamp() << " \n使用方法:\n";
     std::cout << getTimestamp() << "   voice_chat_aec -i <输入设备ID> -o <输出设备ID>\n";
     std::cout << getTimestamp() << " ========================================\n";
-}
-
-// ============================================================================
-// OpenAI 兼容 API 客户端
-// ============================================================================
-
-bool parseUrl(const std::string& url, std::string& host, int& port, std::string& path) {
-    std::string u = url;
-    if (u.find("http://") == 0) u = u.substr(7);
-    else if (u.find("https://") == 0) u = u.substr(8);
-
-    size_t slash_pos = u.find('/');
-    if (slash_pos != std::string::npos) {
-        path = u.substr(slash_pos);
-        u = u.substr(0, slash_pos);
-    } else {
-        path = "/v1/chat/completions";
-    }
-
-    size_t colon_pos = u.find(':');
-    if (colon_pos != std::string::npos) {
-        host = u.substr(0, colon_pos);
-        port = std::stoi(u.substr(colon_pos + 1));
-    } else {
-        host = u;
-        port = 8080;
-    }
-    return true;
-}
-
-void callOpenAICompatibleAPI(
-    const std::string& url,
-    const std::string& model,
-    const std::string& prompt,
-    int max_tokens,
-    std::function<bool(const std::string&)> on_token
-) {
-    std::string host;
-    int port;
-    std::string path;
-    parseUrl(url, host, port, path);
-
-    httplib::Client cli(host, port);
-    cli.set_read_timeout(60, 0);
-
-    nlohmann::json request_body = {
-        {"model", model},
-        {"messages", {{{"role", "user"}, {"content", prompt}}}},
-        {"max_tokens", max_tokens},
-        {"stream", true}
-    };
-
-    std::string body = request_body.dump();
-
-    auto res = cli.Post(path.c_str(), body, "application/json",
-        [&](const char* data, size_t len) {
-            std::string chunk(data, len);
-            std::istringstream ss(chunk);
-            std::string line;
-            while (std::getline(ss, line)) {
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                if (line.find("data: ") == 0) {
-                    std::string json_str = line.substr(6);
-                    if (json_str == "[DONE]") continue;
-                    try {
-                        auto j = nlohmann::json::parse(json_str);
-                        if (j.contains("choices") && !j["choices"].empty()) {
-                            auto& delta = j["choices"][0]["delta"];
-                            if (delta.contains("content")) {
-                                std::string content = delta["content"];
-                                if (!on_token(content)) {
-                                    return false;
-                                }
-                            }
-                        }
-                    } catch (...) {}
-                }
-            }
-            return g_running.load();
-        }
-    );
-
-    if (!res || res->status != 200) {
-        // Barge-in 导致的中断不是错误
-        if (g_barge_in) {
-            return;
-        }
-        throw std::runtime_error("API 请求失败");
-    }
 }
 
 // ============================================================================
@@ -836,17 +520,27 @@ int main(int argc, char* argv[]) {
     std::cout << getTimestamp() << " ========================================\n\n";
 
     // -------------------------------------------------------------------------
-    // 1. 检查 LLM 后端
+    // 1. 初始化 LLM 引擎
     // -------------------------------------------------------------------------
+    SpacemiT::LlmConfig llm_config;
+    if (!cfg.llm_url.empty()) {
+        llm_config = SpacemiT::LlmConfig::CloudAPI(cfg.llm_url, "", cfg.llm_model);
+    } else {
+        llm_config = SpacemiT::LlmConfig::Ollama(cfg.llm_model);
+    }
+    llm_config = llm_config.withMaxTokens(cfg.max_tokens);
+
+    auto llm = std::make_shared<SpacemiT::LlmEngine>(llm_config);
+
     if (cfg.llm_url.empty()) {
         std::cout << getTimestamp() << " [1/5] 检查 Ollama..." << std::flush;
-        if (!ollama::is_running()) {
+        if (!llm->IsAvailable()) {
             std::cerr << "\n" << getTimestamp() << " 错误: Ollama 未运行，请先启动: ollama serve\n";
             return 1;
         }
-        std::cout << " OK (v" << ollama::get_version() << ")\n";
+        std::cout << " OK (v" << llm->GetVersion() << ")\n";
 
-        auto models = ollama::list_models();
+        auto models = llm->ListModels();
         bool model_found = false;
         for (const auto& m : models) {
             if (m.find(cfg.llm_model) != std::string::npos) {
@@ -856,7 +550,7 @@ int main(int argc, char* argv[]) {
         }
         if (!model_found) {
             std::cout << getTimestamp() << "   下载模型 " << cfg.llm_model << "...\n";
-            ollama::pull_model(cfg.llm_model);
+            llm->PullModel(cfg.llm_model);
         }
     } else {
         std::cout << getTimestamp() << " [1/5] LLM 后端: " << cfg.llm_url << " OK\n";
@@ -949,11 +643,10 @@ int main(int argc, char* argv[]) {
     MCPConfig mcp_cfg;
     bool mcp_enabled = false;
     std::unique_ptr<mcp::MCPManager> mcp_manager;
-    std::unique_ptr<LLMBackend> llm_backend;
-    json llm_tools;
-    std::vector<json> conversation_messages;
+    std::string llm_tools_json;
+    std::vector<SpacemiT::ChatMessage> conversation_messages;
     std::thread registry_poll_thread;
-    std::mutex tools_mutex;  // 保护 llm_tools 更新
+    std::mutex tools_mutex;  // 保护 llm_tools_json 更新
     std::set<std::string> known_servers;  // 已知服务器集合
 
     if (!cfg.mcp_config_path.empty()) {
@@ -962,14 +655,10 @@ int main(int argc, char* argv[]) {
         if (loadMCPConfig(cfg.mcp_config_path, mcp_cfg)) {
             mcp_enabled = true;
 
-            // 创建 LLM 后端
-            if (mcp_cfg.backend == "llama") {
-                llm_backend = std::make_unique<LlamaBackend>(mcp_cfg.url, mcp_cfg.model, mcp_cfg.timeout);
-                std::cout << getTimestamp() << " [MCP] LLM后端: llama.cpp (" << mcp_cfg.url << ")\n";
-            } else {
-                llm_backend = std::make_unique<OllamaBackend>(mcp_cfg.url, mcp_cfg.model, mcp_cfg.timeout);
-                std::cout << getTimestamp() << " [MCP] LLM后端: Ollama (" << mcp_cfg.url << ")\n";
-            }
+            // 使用 MCP 配置覆盖 LLM 引擎设置
+            llm->SetModel(mcp_cfg.model);
+            llm->SetSystemPrompt(mcp_cfg.system_prompt);
+            std::cout << getTimestamp() << " [MCP] LLM后端: " << mcp_cfg.url << "\n";
             std::cout << getTimestamp() << " [MCP] 模型: " << mcp_cfg.model << "\n";
 
             // 初始化 MCP Manager
@@ -1018,7 +707,7 @@ int main(int argc, char* argv[]) {
             if (mcp_manager->waitForAnyServer(std::chrono::milliseconds(10000))) {
                 // 获取工具列表
                 auto tools = mcp_manager->getAllTools();
-                llm_tools = llm_backend->convertTools(convertToolsToJson(tools));
+                llm_tools_json = convertMCPToolsToString(tools);
                 std::cout << getTimestamp() << " [MCP] 已连接 " << mcp_manager->readyServerCount()
                           << " 个服务器, " << tools.size() << " 个工具\n";
             } else {
@@ -1026,7 +715,7 @@ int main(int argc, char* argv[]) {
             }
 
             // 初始化对话消息（使用配置的 system_prompt）
-            conversation_messages.push_back({{"role", "system"}, {"content", mcp_cfg.system_prompt}});
+            conversation_messages.push_back(SpacemiT::ChatMessage::System(mcp_cfg.system_prompt));
 
             // 启动注册中心轮询线程（如果配置了 registry_url）
             if (!mcp_cfg.registry_url.empty()) {
@@ -1091,7 +780,7 @@ int main(int argc, char* argv[]) {
                             {
                                 std::lock_guard<std::mutex> lock(tools_mutex);
                                 auto tools = mcp_manager->getAllTools();
-                                llm_tools = llm_backend->convertTools(convertToolsToJson(tools));
+                                llm_tools_json = convertMCPToolsToString(tools);
                                 std::cout << getTimestamp() << " [MCP] 工具列表已更新: " << tools.size() << " 个工具\n";
                             }
                         }
@@ -1175,9 +864,9 @@ int main(int argc, char* argv[]) {
 
 #ifdef USE_MCP
         // MCP 模式：支持工具调用
-        if (mcp_enabled && llm_backend) {
+        if (mcp_enabled) {
             // 添加用户消息
-            conversation_messages.push_back({{"role", "user"}, {"content", text}});
+            conversation_messages.push_back(SpacemiT::ChatMessage::User(text));
 
             const int MAX_TOOL_ROUNDS = 10;
             int round = 0;
@@ -1187,79 +876,87 @@ int main(int argc, char* argv[]) {
                 std::cout << getTimestamp() << " [AI]: " << std::flush;
 
                 // 获取当前工具列表（可能被轮询线程更新）
-                json current_tools;
+                std::string current_tools;
                 {
                     std::lock_guard<std::mutex> lock(tools_mutex);
-                    current_tools = llm_tools;
+                    current_tools = llm_tools_json;
                 }
 
                 // 调用 LLM
-                json result = llm_backend->chatStream(
+                auto result = llm->ChatStream(
                     conversation_messages,
-                    current_tools,
-                    [&](const std::string& token) {
-                        if (g_barge_in) return;
-                        std::cout << token << std::flush;
-                        full_response += token;
-                        text_buffer.addText(token);
-
-                        // 检测完整句子并立即 TTS
-                        while (text_buffer.hasSentence() && !g_barge_in) {
-                            std::string sentence = text_buffer.getNextSentence();
-                            synthesizeSentence(sentence);
+                    [&](const std::string& chunk, bool is_done, const std::string& error) -> bool {
+                        if (g_barge_in || !g_running) return false;
+                        if (!error.empty()) {
+                            std::cerr << "\n" << getTimestamp() << " [LLM错误] " << error << std::endl;
+                            return false;
                         }
-                    }
+                        if (is_done) return true;
+
+                        if (!chunk.empty()) {
+                            std::cout << chunk << std::flush;
+                            full_response += chunk;
+                            text_buffer.addText(chunk);
+
+                            // 检测完整句子并立即 TTS
+                            while (text_buffer.hasSentence() && !g_barge_in) {
+                                std::string sentence = text_buffer.getNextSentence();
+                                synthesizeSentence(sentence);
+                            }
+                        }
+                        return true;
+                    },
+                    current_tools
                 );
 
                 std::cout << std::endl;
-                std::string content = result.value("content", "");
 
                 // 检查是否有工具调用
-                if (result.contains("tool_calls") && !result["tool_calls"].empty()) {
+                if (result.HasToolCalls()) {
                     std::cout << getTimestamp() << " [Tool Call] 检测到工具调用\n";
 
                     // 添加 assistant 消息（带 tool_calls）
-                    conversation_messages.push_back({
-                        {"role", "assistant"},
-                        {"content", content},
-                        {"tool_calls", result["tool_calls"]}
-                    });
+                    conversation_messages.push_back(
+                        SpacemiT::ChatMessage::Assistant(result.content, result.tool_calls_json));
 
-                    // 执行每个工具调用（不进行 TTS）
-                    for (const auto& tc : result["tool_calls"]) {
-                        std::string tool_name = tc["function"]["name"];
-                        json tool_args = tc["function"]["arguments"];
+                    // 解析 tool_calls JSON 并执行
+                    try {
+                        auto tool_calls = json::parse(result.tool_calls_json);
+                        for (const auto& tc : tool_calls) {
+                            std::string tool_name = tc["function"]["name"];
+                            json tool_args = tc["function"]["arguments"];
 
-                        // 如果 arguments 是字符串，解析它
-                        if (tool_args.is_string()) {
-                            try {
-                                tool_args = json::parse(tool_args.get<std::string>());
-                            } catch (...) {}
+                            // 如果 arguments 是字符串，解析它
+                            if (tool_args.is_string()) {
+                                try {
+                                    tool_args = json::parse(tool_args.get<std::string>());
+                                } catch (...) {}
+                            }
+
+                            std::string server = mcp_manager->findServerForTool(tool_name);
+                            std::cout << getTimestamp() << " [MCP] 调用: " << tool_name
+                                      << " @ " << server << " 参数: " << tool_args.dump() << std::endl;
+
+                            auto tool_result = mcp_manager->callTool(tool_name, tool_args);
+
+                            std::string result_text;
+                            if (tool_result.success && !tool_result.contents.empty()) {
+                                result_text = tool_result.contents[0];
+                            } else if (!tool_result.error.empty()) {
+                                result_text = "错误: " + tool_result.error;
+                            } else {
+                                result_text = tool_result.rawResult.dump();
+                            }
+
+                            std::cout << getTimestamp() << " [MCP] 结果: " << result_text << std::endl;
+
+                            // 添加 tool 消息
+                            std::string tc_id = tc.value("id", "");
+                            conversation_messages.push_back(
+                                SpacemiT::ChatMessage::Tool(result_text, tc_id));
                         }
-
-                        std::string server = mcp_manager->findServerForTool(tool_name);
-                        std::cout << getTimestamp() << " [MCP] 调用: " << tool_name
-                                  << " @ " << server << " 参数: " << tool_args.dump() << std::endl;
-
-                        auto tool_result = mcp_manager->callTool(tool_name, tool_args);
-
-                        std::string result_text;
-                        if (tool_result.success && !tool_result.contents.empty()) {
-                            result_text = tool_result.contents[0];
-                        } else if (!tool_result.error.empty()) {
-                            result_text = "错误: " + tool_result.error;
-                        } else {
-                            result_text = tool_result.rawResult.dump();
-                        }
-
-                        std::cout << getTimestamp() << " [MCP] 结果: " << result_text << std::endl;
-
-                        // 添加 tool 消息
-                        json tool_msg = {{"role", "tool"}, {"content", result_text}};
-                        if (mcp_cfg.backend == "llama" && tc.contains("id")) {
-                            tool_msg["tool_call_id"] = tc["id"];
-                        }
-                        conversation_messages.push_back(tool_msg);
+                    } catch (const std::exception& e) {
+                        std::cerr << getTimestamp() << " [MCP] 工具调用解析错误: " << e.what() << std::endl;
                     }
 
                     // 清理文本缓冲区，准备下一轮
@@ -1269,7 +966,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 // 没有工具调用，添加最终响应
-                conversation_messages.push_back({{"role", "assistant"}, {"content", content}});
+                conversation_messages.push_back(
+                    SpacemiT::ChatMessage::Assistant(result.content));
 
                 // 处理残留句子
                 if (!g_barge_in) {
@@ -1284,59 +982,36 @@ int main(int argc, char* argv[]) {
         } else
 #endif // USE_MCP
         {
-            // 非 MCP 模式：原有逻辑
+            // 非 MCP 模式：使用 LlmEngine 统一调用
             std::cout << getTimestamp() << " [LLM] 开始生成...\n";
             std::cout << getTimestamp() << " [AI]: " << std::flush;
 
-            try {
-                if (!cfg.llm_url.empty()) {
-                    // OpenAI 兼容 API
-                    callOpenAICompatibleAPI(cfg.llm_url, cfg.llm_model, text, cfg.max_tokens,
-                        [&](const std::string& chunk) -> bool {
-                            if (g_barge_in) return false;
+            auto result = llm->GenerateStream(text,
+                [&](const std::string& chunk, bool is_done, const std::string& error) -> bool {
+                    if (g_barge_in || !g_running) return false;
+                    if (!error.empty()) {
+                        std::cerr << "\n" << getTimestamp() << " [LLM错误] " << error << std::endl;
+                        return false;
+                    }
+                    if (is_done) return true;
 
-                            if (!chunk.empty()) {
-                                std::cout << chunk << std::flush;
-                                full_response += chunk;
-                                text_buffer.addText(chunk);
+                    if (!chunk.empty()) {
+                        std::cout << chunk << std::flush;
+                        full_response += chunk;
+                        text_buffer.addText(chunk);
 
-                                while (text_buffer.hasSentence() && !g_barge_in) {
-                                    std::string sentence = text_buffer.getNextSentence();
-                                    synthesizeSentence(sentence);
-                                }
-                            }
-                            return g_running && !g_barge_in;
-                        });
-                } else {
-                    // Ollama
-                    ollama::options opts;
-                    opts["num_predict"] = cfg.max_tokens;
-                    opts["temperature"] = 0.7;
+                        while (text_buffer.hasSentence() && !g_barge_in) {
+                            std::string sentence = text_buffer.getNextSentence();
+                            synthesizeSentence(sentence);
+                        }
+                    }
+                    return true;
+                });
 
-                    ollama::generate(cfg.llm_model, text,
-                        [&](const ollama::response& r) -> bool {
-                            if (g_barge_in) return false;
-
-                            std::string chunk = r.as_simple_string();
-                            if (!chunk.empty()) {
-                                std::cout << chunk << std::flush;
-                                full_response += chunk;
-                                text_buffer.addText(chunk);
-
-                                while (text_buffer.hasSentence() && !g_barge_in) {
-                                    std::string sentence = text_buffer.getNextSentence();
-                                    synthesizeSentence(sentence);
-                                }
-                            }
-                            return g_running && !g_barge_in;
-                        }, opts);
-                }
-            } catch (const std::exception& e) {
-                if (g_barge_in) {
-                    std::cout << "\n" << getTimestamp() << " [LLM] 已因 barge-in 中断生成\n";
-                } else {
-                    std::cerr << "\n" << getTimestamp() << " [LLM错误] " << e.what() << std::endl;
-                }
+            if (result.cancelled && g_barge_in) {
+                std::cout << "\n" << getTimestamp() << " [LLM] 已因 barge-in 中断生成\n";
+            } else if (!result.error.empty()) {
+                std::cerr << "\n" << getTimestamp() << " [LLM错误] " << result.error << std::endl;
                 g_processing = false;
                 return;
             }
