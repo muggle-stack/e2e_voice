@@ -7,7 +7,7 @@
  */
 
 #include "aec_duplex_processor.hpp"
-#include "space_audio_duplex.hpp"
+#include "audio_duplex_api.hpp"
 
 #include <iostream>
 #include <cstring>

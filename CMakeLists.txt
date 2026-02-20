@@ -186,9 +186,7 @@ if(USE_AEC)
 
     target_include_directories(voice_chat_aec PRIVATE
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/modules/audio/space_audio/include
-        ${CMAKE_SOURCE_DIR}/modules/audio/stream/include
-        ${CMAKE_SOURCE_DIR}/modules/audio/resampler/include
+        ${CMAKE_SOURCE_DIR}/modules/audio/inc
         ${CMAKE_SOURCE_DIR}/modules/stt/inc
         ${CMAKE_SOURCE_DIR}/modules/tts/inc
         ${CMAKE_SOURCE_DIR}/modules/vad/inc
@@ -240,7 +238,13 @@ if(USE_AEC)
     # Optional MCP support
     if(USE_MCP)
         target_compile_definitions(voice_chat_aec PRIVATE USE_MCP)
-        target_include_directories(voice_chat_aec PRIVATE
+        # Retrieve FetchContent'd nlohmann/json path (populated by modules/mcp)
+        include(FetchContent)
+        FetchContent_GetProperties(json)
+        # Use BEFORE to ensure FetchContent'd json (v3.11.3) takes priority
+        # over system-installed nlohmann-json, preventing ABI mismatch
+        target_include_directories(voice_chat_aec BEFORE PRIVATE
+            ${json_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/modules/mcp/inc
         )
         target_link_libraries(voice_chat_aec mcp_static)

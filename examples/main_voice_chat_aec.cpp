@@ -5,7 +5,7 @@
  * 支持 barge-in（用户打断 TTS 播放）
  *
  * 用法:
- *   ./voice_chat_aec [--tts zh|en|zh-en] [--model qwen2.5:0.5b] [--input-device 0] [--output-device 0] [--sample-rate 48000]
+ *   ./voice_chat_aec [--tts matcha:zh|matcha:en|matcha:zh-en|kokoro|kokoro:<voice>] [--model qwen2.5:0.5b] [--input-device 0] [--output-device 0] [--sample-rate 48000]
  */
 
 #include <iostream>
@@ -33,29 +33,29 @@
 #include "aec_duplex_processor.hpp"
 
 // 全双工音频（用于列出设备）
-#include "space_audio_duplex.hpp"
+#include "audio_duplex_api.hpp"
 
 // Resampler (AEC rate <-> 16kHz)
-#include "resampler.hpp"
+#include "audio_resampler_api.hpp"
 
 // STT
-#include "SpaceAudioSDK.h"
+#include "stt_api.hpp"
 
 // TTS
-#include "SpaceTtsSDK.h"
+#include "tts_api.hpp"
 
 // VAD
-#include "SpaceVadSDK.h"
+#include "vad_api.hpp"
 
 // LLM
-#include "SpaceLlmSDK.h"
+#include "llm_api.hpp"
 
 // 流式 TTS 分句
 #include "text_buffer.hpp"
 
 // MCP SDK (可选)
 #ifdef USE_MCP
-#include <mcp.h>
+#include <mcp_api.hpp>
 #include <curl/curl.h>
 #include <map>
 #endif
@@ -101,11 +101,194 @@ void signalHandler(int sig) {
 }
 
 // ============================================================================
+// TTS 引擎选择辅助（从 simple_demo.cpp 复制）
+// ============================================================================
+
+// Engine selection result from parsing "--tts" argument
+struct EngineSelection {
+    SpacemiT::BackendType backend;
+    std::string voice;  // Only used by Kokoro
+};
+
+// Kokoro known voices: {full_name, short_name}
+static const std::vector<std::pair<std::string, std::string>> kKokoroVoices = {
+    // Chinese female
+    {"zf_xiaobei",  "xiaobei"},
+    {"zf_xiaoni",   "xiaoni"},
+    {"zf_xiaoxiao", "xiaoxiao"},
+    {"zf_xiaoyi",   "xiaoyi"},
+    // Chinese male
+    {"zm_yunxi",    "yunxi"},
+    {"zm_yunyang",  "yunyang"},
+    {"zm_yunjian",  "yunjian"},
+    {"zm_yunfan",   "yunfan"},
+    // American English female
+    {"af_heart",    "heart"},
+    {"af_alloy",    "alloy"},
+    {"af_aoede",    "aoede"},
+    {"af_bella",    "bella"},
+    {"af_jessica",  "jessica"},
+    {"af_kore",     "kore"},
+    {"af_nicole",   "nicole"},
+    {"af_nova",     "nova"},
+    {"af_river",    "river"},
+    {"af_sarah",    "sarah"},
+    {"af_sky",      "sky"},
+    // American English male
+    {"am_adam",     "adam"},
+    {"am_echo",     "echo"},
+    {"am_eric",     "eric"},
+    {"am_fenrir",   "fenrir"},
+    {"am_liam",     "liam"},
+    {"am_michael",  "michael"},
+    {"am_onyx",     "onyx"},
+    {"am_puck",     "puck"},
+    // British English female
+    {"bf_alice",    "alice"},
+    {"bf_emma",     "emma"},
+    {"bf_isabella", "isabella"},
+    {"bf_lily",     "lily"},
+    // British English male
+    {"bm_daniel",   "daniel"},
+    {"bm_fable",    "fable"},
+    {"bm_george",   "george"},
+    {"bm_lewis",    "lewis"},
+};
+
+// Resolve a voice name: accept both full ("zf_xiaobei") and short ("xiaobei")
+std::string resolveVoiceName(const std::string& input) {
+    if (input.empty()) return input;
+
+    // Already a full name (contains '_') — pass through
+    if (input.find('_') != std::string::npos) {
+        return input;
+    }
+
+    // Short name lookup
+    std::vector<std::string> matches;
+    for (const auto& [full, shortname] : kKokoroVoices) {
+        if (shortname == input) {
+            matches.push_back(full);
+        }
+    }
+
+    if (matches.size() == 1) {
+        std::cout << "音色: " << input << " -> " << matches[0] << std::endl;
+        return matches[0];
+    }
+
+    if (matches.size() > 1) {
+        std::cerr << "错误: 音色名 '" << input << "' 有多个匹配:\n";
+        for (const auto& m : matches) {
+            std::cerr << "  " << m << "\n";
+        }
+        std::cerr << "请使用完整名称，如 --tts kokoro:" << matches[0] << "\n";
+        exit(1);
+    }
+
+    // No match — might be a valid voice not in our list, pass through
+    std::cerr << "警告: 未知音色 '" << input << "'，将直接使用该名称\n"
+              << "使用 --list-voices 查看可用音色列表\n";
+    return input;
+}
+
+void printVoiceList() {
+    std::cout << "Kokoro 可用音色列表:\n"
+              << "\n"
+              << "中文女声 (zf_):\n"
+              << "  zf_xiaobei      小北 (默认)\n"
+              << "  zf_xiaoni       小妮\n"
+              << "  zf_xiaoxiao     小小\n"
+              << "  zf_xiaoyi       小一\n"
+              << "\n"
+              << "中文男声 (zm_):\n"
+              << "  zm_yunxi        云希\n"
+              << "  zm_yunyang      云阳\n"
+              << "  zm_yunjian      云健\n"
+              << "  zm_yunfan       云帆\n"
+              << "\n"
+              << "美式英语女声 (af_):\n"
+              << "  af_heart        Heart\n"
+              << "  af_alloy        Alloy\n"
+              << "  af_aoede        Aoede\n"
+              << "  af_bella        Bella\n"
+              << "  af_jessica      Jessica\n"
+              << "  af_kore         Kore\n"
+              << "  af_nicole       Nicole\n"
+              << "  af_nova         Nova\n"
+              << "  af_river        River\n"
+              << "  af_sarah        Sarah\n"
+              << "  af_sky          Sky\n"
+              << "\n"
+              << "美式英语男声 (am_):\n"
+              << "  am_adam         Adam\n"
+              << "  am_echo         Echo\n"
+              << "  am_eric         Eric\n"
+              << "  am_fenrir       Fenrir\n"
+              << "  am_liam         Liam\n"
+              << "  am_michael      Michael\n"
+              << "  am_onyx         Onyx\n"
+              << "  am_puck         Puck\n"
+              << "\n"
+              << "英式英语女声 (bf_):\n"
+              << "  bf_alice        Alice\n"
+              << "  bf_emma         Emma\n"
+              << "  bf_isabella     Isabella\n"
+              << "  bf_lily         Lily\n"
+              << "\n"
+              << "英式英语男声 (bm_):\n"
+              << "  bm_daniel       Daniel\n"
+              << "  bm_fable        Fable\n"
+              << "  bm_george       George\n"
+              << "  bm_lewis        Lewis\n"
+              << "\n"
+              << "用法: --tts kokoro:<voice>  支持短名 (xiaobei) 和全名 (zf_xiaobei)\n"
+              << std::endl;
+}
+
+EngineSelection parseEngine(const std::string& spec) {
+    EngineSelection sel;
+    sel.backend = SpacemiT::BackendType::MATCHA_ZH;
+
+    // Split on ':'
+    auto colon = spec.find(':');
+    std::string engine = (colon != std::string::npos) ? spec.substr(0, colon) : spec;
+    std::string variant = (colon != std::string::npos) ? spec.substr(colon + 1) : "";
+
+    if (engine == "matcha") {
+        if (variant.empty() || variant == "zh") {
+            sel.backend = SpacemiT::BackendType::MATCHA_ZH;
+        } else if (variant == "en") {
+            sel.backend = SpacemiT::BackendType::MATCHA_EN;
+        } else if (variant == "zh-en" || variant == "zhen") {
+            sel.backend = SpacemiT::BackendType::MATCHA_ZH_EN;
+        } else {
+            std::cerr << "错误: 未知 Matcha 变体 '" << variant << "'\n"
+                      << "可用变体: zh, en, zh-en\n";
+            exit(1);
+        }
+        return sel;
+    }
+
+    if (engine == "kokoro") {
+        sel.backend = SpacemiT::BackendType::KOKORO;
+        sel.voice = resolveVoiceName(variant);
+        return sel;
+    }
+
+    std::cerr << "错误: 未知引擎 '" << engine << "'\n"
+              << "可用引擎: matcha, kokoro\n"
+              << "用法: --tts matcha:zh 或 --tts kokoro:zf_xiaobei\n";
+    exit(1);
+}
+
+// ============================================================================
 // 参数配置
 // ============================================================================
 
 struct Config {
-    std::string tts_type = "zh";           // zh, en, zh-en
+    std::string tts_type = "matcha:zh";    // matcha:zh, matcha:en, matcha:zh-en, kokoro, kokoro:<voice>
+    bool list_voices = false;
     std::string llm_model = "qwen2.5:0.5b";
     std::string llm_url = "";              // 空 = 使用 ollama
     int input_device = -1;
@@ -165,6 +348,8 @@ Config parseArgs(int argc, char* argv[]) {
             }
         } else if (strcmp(argv[i], "--mcp-config") == 0 && i + 1 < argc) {
             cfg.mcp_config_path = argv[++i];
+        } else if (strcmp(argv[i], "--list-voices") == 0) {
+            cfg.list_voices = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             std::cout << "用法: " << argv[0] << " [选项]\n"
                       << "\n音频设备:\n"
@@ -175,7 +360,10 @@ Config parseArgs(int argc, char* argv[]) {
                       << "  --model <name>            LLM模型 (默认: qwen2.5:0.5b)\n"
                       << "  --llm-url <url>           LLM API地址 (默认: 使用ollama)\n"
                       << "\nTTS:\n"
-                      << "  --tts <type>              TTS后端: zh, en, zh-en (默认: zh)\n"
+                      << "  --tts <engine>            TTS后端 (默认: matcha:zh)\n"
+                      << "                            matcha:zh / matcha:en / matcha:zh-en\n"
+                      << "                            kokoro / kokoro:<voice>\n"
+                      << "  --list-voices             列出 Kokoro 可用音色\n"
                       << "\nAEC:\n"
                       << "  --no-aec                  禁用回声消除\n"
                       << "  --no-ns                   禁用噪声抑制\n"
@@ -501,6 +689,12 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // 列出 Kokoro 音色
+    if (cfg.list_voices) {
+        printVoiceList();
+        return 0;
+    }
+
     std::cout << getTimestamp() << " ========================================\n";
     std::cout << getTimestamp() << "    带 AEC 的语音对话系统 (全双工模式)\n";
     std::cout << getTimestamp() << " ========================================\n";
@@ -588,19 +782,31 @@ int main(int argc, char* argv[]) {
     // -------------------------------------------------------------------------
     std::cout << getTimestamp() << " [4/5] 初始化 TTS (" << cfg.tts_type << ")..." << std::flush;
 
-    SpacemiT::TtsConfig tts_cfg;
-    int tts_sample_rate = 22050;
+    auto selection = parseEngine(cfg.tts_type);
 
-    if (cfg.tts_type == "en") {
-        tts_cfg = SpacemiT::TtsConfig::MatchaEN();
-        tts_sample_rate = 22050;
-    } else if (cfg.tts_type == "zh-en") {
-        tts_cfg = SpacemiT::TtsConfig::MatchaZHEN();
-        tts_sample_rate = 16000;
-    } else {
-        tts_cfg = SpacemiT::TtsConfig::MatchaZH();
-        tts_sample_rate = 22050;
+    SpacemiT::TtsConfig tts_cfg;
+    tts_cfg.backend = selection.backend;
+
+    if (selection.backend == SpacemiT::BackendType::KOKORO && !selection.voice.empty()) {
+        tts_cfg.voice = selection.voice;
     }
+
+    int tts_sample_rate;
+    switch (selection.backend) {
+        case SpacemiT::BackendType::MATCHA_ZH:
+        case SpacemiT::BackendType::MATCHA_EN:
+            tts_sample_rate = 22050;
+            break;
+        case SpacemiT::BackendType::MATCHA_ZH_EN:
+            tts_sample_rate = 16000;
+            break;
+        case SpacemiT::BackendType::KOKORO:
+            tts_sample_rate = 24000;
+            break;
+        default:
+            tts_sample_rate = 22050;
+    }
+    tts_cfg.sample_rate = tts_sample_rate;
 
     auto tts = std::make_shared<SpacemiT::TtsEngine>(tts_cfg);
     if (!tts->IsInitialized()) {
