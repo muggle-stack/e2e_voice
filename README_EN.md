@@ -1,25 +1,53 @@
-# E2E Voice - C++ End-to-End Voice Dialogue System
+# E2E Voice - End-to-End Voice Dialogue System
 
-A complete Chinese intelligent voice dialogue system integrating ASR (Speech Recognition), LLM (Large Language Model), and TTS (Text-to-Speech).
+A C++17 end-to-end Chinese intelligent voice dialogue system integrating ASR (Speech Recognition), LLM (Large Language Model), TTS (Text-to-Speech), VAD (Voice Activity Detection), and AEC (Full-Duplex Echo Cancellation).
+
+[中文](README.md)
 
 ## Features
 
-- **ASR**: Local SenseVoice or Aliyun real-time ASR
-- **LLM**: Local Ollama or cloud APIs (DeepSeek/OpenAI)
-- **TTS**: Matcha-TTS with Chinese, English, and bilingual support
-- **Speaker Recognition**: 3D-Speaker based speaker verification
-- **Streaming**: LLM streaming output + real-time TTS playback
+- **Full-Duplex Conversation** — WebRTC AEC echo cancellation + noise suppression with Barge-in support
+- **Offline Speech Recognition** — SenseVoice ONNX, supporting Chinese / English / Japanese / Korean / Cantonese
+- **Multi-Backend TTS** — Matcha-TTS (Chinese / English / Mixed) + Kokoro (multi-voice)
+- **LLM Integration** — Ollama local inference / OpenAI-compatible cloud APIs, streaming output
+- **MCP Tool Calling** — Extend LLM capabilities via Model Context Protocol (optional)
+- **Modular Architecture** — Independent audio / stt / tts / vad / llm / mcp modules, usable standalone
+- **Python Bindings** — pybind11 Python interfaces for audio / stt / tts / vad
 
-## Quick Start
+## Architecture
 
-### Install Dependencies
+### Full-Duplex AEC Pipeline
 
-**Ubuntu/Debian:**
+![voice_chat_aec Pipeline](docs/voice_chat_aec_pipeline_en.png)
+
+### Modular Architecture
+
+| Module | Path | Description | Python Package |
+|--------|------|-------------|----------------|
+| **Audio** | [`modules/audio/`](modules/audio/README.md) | Audio capture / playback / full-duplex / resampling | `evo_audio` |
+| **STT** | [`modules/stt/`](modules/stt/README.md) | SenseVoice speech recognition | `evo_asr` |
+| **TTS** | [`modules/tts/`](modules/tts/README.md) | Matcha / Kokoro speech synthesis | `evo_tts` |
+| **VAD** | [`modules/vad/`](modules/vad/README.md) | Silero voice activity detection | `evo_vad` |
+| **LLM** | [`modules/llm/`](modules/llm/README.md) | Ollama / OpenAI-compatible API client | — |
+| **MCP** | [`modules/mcp/`](modules/mcp/README.md) | MCP client SDK (stdio / socket / HTTP) | — |
+
+## Dependencies
+
+<table>
+<tr><th>Ubuntu / Debian</th><th>macOS</th></tr>
+<tr>
+<td>
+
 ```bash
-sudo apt install gcc g++ cmake pkg-config
-sudo apt install libportaudio-dev libsndfile1-dev libcurl4-openssl-dev libfftw3-dev libssl-dev espeak-ng
+sudo apt install gcc g++ cmake pkg-config \
+  libportaudio-dev libsndfile1-dev \
+  libcurl4-openssl-dev libfftw3-dev \
+  libssl-dev espeak-ng libabsl-dev
+```
 
-# ONNX Runtime
+ONNX Runtime must be installed manually, see [ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases):
+
+```bash
 wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz
 tar -xzf onnxruntime-linux-x64-1.20.0.tgz
 sudo cp -r onnxruntime-linux-x64-1.20.0/include/* /usr/local/include/
@@ -27,112 +55,137 @@ sudo cp -r onnxruntime-linux-x64-1.20.0/lib/* /usr/local/lib/
 sudo ldconfig
 ```
 
-**macOS:**
+</td>
+<td>
+
 ```bash
-brew install gcc cmake pkg-config portaudio libsndfile curl fftw onnxruntime espeak openssl
+brew install gcc cmake pkg-config \
+  portaudio libsndfile curl fftw \
+  onnxruntime espeak openssl abseil
 ```
 
-**Install Ollama (Local LLM):**
+</td>
+</tr>
+</table>
+
+**Local LLM (Ollama):**
+
 ```bash
 curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull qwen2.5:0.5b
 ```
 
+## Build & Run
+
 ### Build
 
 ```bash
-git clone https://github.com/muggle-stack/e2e_Voice.git
+git clone --recursive https://github.com/muggle-stack/e2e_Voice.git
 cd e2e_Voice
-./build.sh
+mkdir -p build && cd build
+cmake .. && make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 ```
 
-**Cloud mode (optional):**
+**CMake Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `USE_AEC` | `ON` | WebRTC echo cancellation (full-duplex barge-in) |
+| `USE_MCP` | `OFF` | Model Context Protocol tool calling |
+
 ```bash
-mkdir -p build && cd build
-cmake -DUSE_CLOUD_ASR=ON ..    # Aliyun ASR
-cmake -DUSE_CLOUD_LLM=ON ..    # Cloud LLM API
-make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+# Enable MCP tool calling
+cmake -DUSE_MCP=ON .. && make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 ```
+
+> **Note:** AEC requires building the WebRTC module first: `cd modules/webrtc-audio-processing && meson build && ninja -C build`
 
 ### Run
 
 ```bash
-# Full dialogue system
-./build/bin/asr_llm_tts --help
-./build/bin/asr_llm_tts --device_index 1 --vad_type silero
-
-# Speech recognition (file)
-./build/bin/asr audio.wav
-
-# Text-to-speech
-./build/bin/tts --text "你好世界" --tts_type zh
-./build/bin/tts --text "Hello" --tts_type en
-./build/bin/tts --text "今天学Python" --tts_type zh-en
-
-# Find audio devices
-python search_device.py
+./build/bin/voice_chat_aec                                     # Default configuration
+./build/bin/voice_chat_aec --tts kokoro --model qwen2.5:7b     # Kokoro TTS + larger model
+./build/bin/voice_chat_aec -l                                  # List audio devices
+./build/bin/voice_chat_aec --mcp-config mcp.json               # Enable tool calling
+./build/bin/voice_chat_aec --llm-url https://api.example.com/v1/chat/completions  # Cloud LLM
 ```
 
-### Speaker Recognition
+### Runtime Options
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `-i`, `--input-device <id>` | Input device index | System default |
+| `-o`, `--output-device <id>` | Output device index | System default |
+| `-l`, `--list-devices` | List available audio devices | — |
+| `--tts <engine>` | TTS backend (`matcha:zh` / `matcha:en` / `matcha:zh-en` / `kokoro` / `kokoro:<voice>`) | `matcha:zh` |
+| `--model <name>` | LLM model name | `qwen2.5:0.5b` |
+| `--llm-url <url>` | LLM API URL (OpenAI-compatible) | Ollama local |
+| `--no-aec` | Disable echo cancellation | — |
+| `--no-ns` | Disable noise suppression | — |
+| `--agc` | Enable automatic gain control | Disabled |
+| `--aec-delay <ms>` | AEC delay compensation | `50` |
+| `--buffer-frames <n>` | Audio buffer frame count | macOS `480` / Linux `960` |
+| `--sample-rate <hz>` | Audio sample rate | `48000` |
+| `--save-audio [file]` | Save AEC-processed audio | `aec_debug.wav` |
+| `--mcp-config <path>` | MCP config file (enable tool calling) | — |
+
+### Component Demos
+
+Each module provides standalone executable demos:
 
 ```bash
-# Register speaker
-./build/bin/register_speaker -n john sample1.wav sample2.wav
-
-# Enable speaker verification
-./build/bin/asr_llm_tts --enable_speaker --speaker_threshold 0.5
+./build/bin/stt_test audio.wav       # File-based speech recognition
+./build/bin/simple_demo --text "你好" # TTS speech synthesis
+./build/bin/vad_simple_demo          # VAD voice activity detection
+./build/bin/audio_demo -l            # Audio device listing
 ```
 
-## Cloud Configuration
+## Python Bindings
 
-### Aliyun ASR Configuration
-
-1. **Get AccessKey**
-   - Visit https://ram.console.aliyun.com/manage/ak
-   - Click "Create AccessKey"
-   - Save the AccessKey ID and AccessKey Secret
-
-2. **Get AppKey**
-   - Visit https://nls-portal.console.aliyun.com/
-   - Create a project, select "Short Sentence Recognition" service
-   - Copy the project's AppKey
-
-3. **Configure Environment Variables**
+Four core modules provide pybind11 Python interfaces:
 
 ```bash
-cp .env.example .env
+cd modules/audio/python && pip install -e .   # evo_audio
+cd modules/stt/python   && pip install -e .   # evo_asr
+cd modules/tts/python   && pip install -e .   # evo_tts
+cd modules/vad/python   && pip install -e .   # evo_vad
 ```
 
-Edit `.env` file:
+See each module's README for detailed usage.
 
-```bash
-# Aliyun ASR
-ALIYUN_ACCESS_KEY_ID=LTAI***************
-ALIYUN_ACCESS_KEY_SECRET=******************************
-ALIYUN_ASR_APPKEY=tt43P2u****
+## Model Cache
 
-# Cloud LLM (DeepSeek/OpenAI)
-API_KEY=sk-xxx
-API_URL=https://api.deepseek.com/chat/completions
+Models are automatically downloaded to `~/.cache/` on first run:
+
 ```
-
-## Models
-
-Auto-downloaded on first run to `~/.cache/`:
-- ASR: `sensevoice/`
-- TTS: `matcha-tts/`
-- VAD: `silero_vad.onnx`
+~/.cache/
+├── sensevoice/                          # ASR (SenseVoice ONNX)
+├── matcha-tts/
+│   ├── matcha-icefall-zh-baker/         # Chinese TTS (22050Hz)
+│   ├── matcha-icefall-en_US-ljspeech/   # English TTS (22050Hz)
+│   ├── matcha-icefall-zh-en/            # Chinese-English mixed TTS (16000Hz)
+│   ├── vocos-22khz-univ.onnx           # Vocoder (Chinese/English)
+│   └── vocos-16khz-univ.onnx           # Vocoder (Chinese-English mixed)
+└── silero_vad.onnx                      # VAD (Silero)
+```
 
 ## License
 
-MIT License - See [LICENSE](LICENSE)
+MIT License — See [LICENSE](LICENSE)
 
 ## Acknowledgements
 
-- [ollama-hpp](https://github.com/jmont-dev/ollama-hpp) - C++ Ollama Client
-- [ONNX Runtime](https://github.com/microsoft/onnxruntime) - High-performance Inference Engine
-- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) - Speech Recognition Model
-- [Matcha-TTS](https://github.com/shivammehta25/Matcha-TTS) - Text-to-Speech Model
-- [cppjieba](https://github.com/yanyiwu/cppjieba) - C++ Chinese Word Segmentation Library
-- [cpp-pinyin](https://github.com/wolfgitpr/cpp-pinyin) - Chinese to Pinyin Library
-- [dengcunqin](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010) - Chinese-English Matcha model
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) — High-performance inference engine
+- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — Speech recognition model
+- [Matcha-TTS](https://github.com/shivammehta25/Matcha-TTS) — Text-to-speech model
+- [Kokoro](https://github.com/hexgrad/Kokoro-82M) — Multi-voice speech synthesis
+- [Vocos](https://github.com/gemelo-ai/vocos) — Vocoder
+- [Silero VAD](https://github.com/snakers4/silero-vad) — Voice activity detection
+- [WebRTC Audio Processing](https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing) — Echo cancellation / noise suppression
+- [PortAudio](http://www.portaudio.com/) — Cross-platform audio I/O
+- [cppjieba](https://github.com/yanyiwu/cppjieba) — C++ Chinese word segmentation
+- [cpp-pinyin](https://github.com/wolfgitpr/cpp-pinyin) — Chinese to Pinyin conversion
+- [espeak-ng](https://github.com/espeak-ng/espeak-ng) — English phonemization
+- [nlohmann/json](https://github.com/nlohmann/json) — JSON library
+- [pybind11](https://github.com/pybind/pybind11) — Python bindings
+- [dengcunqin](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010) — Chinese-English Matcha model

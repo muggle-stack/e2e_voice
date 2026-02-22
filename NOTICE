@@ -1,0 +1,87 @@
+e2e_voice - End-to-End Voice Dialogue System
+Copyright 2024 muggle-stack
+
+This product includes software developed at
+muggle-stack (https://github.com/muggle-stack/e2e_Voice).
+
+---------------------------------------------------------------------------
+Third-party Software Notices:
+---------------------------------------------------------------------------
+
+This product contains portions of the following third-party software:
+
+1. PortAudio (http://www.portaudio.com/)
+   Copyright (c) 1999-2026 Ross Bencina and Phil Burk
+   Licensed under the MIT License.
+
+2. libsndfile (https://github.com/libsndfile/libsndfile)
+   Copyright (c) 1999-2026 Erik de Castro Lopo
+   Licensed under the GNU Lesser General Public License v2.1.
+
+3. libsamplerate (https://github.com/libsndfile/libsamplerate)
+   Copyright (c) 2002-2026 Erik de Castro Lopo
+   Licensed under the BSD 2-Clause License.
+
+4. ONNX Runtime (https://github.com/microsoft/onnxruntime)
+   Copyright (c) 2018-2026 Microsoft Corporation
+   Licensed under the MIT License.
+
+5. FFTW3 (http://www.fftw.org/)
+   Copyright (c) 2003-2026 Matteo Frigo and Steven G. Johnson
+   Licensed under the GNU General Public License v2.0.
+
+6. libcurl (https://curl.se/)
+   Copyright (c) 1996-2026 Daniel Stenberg
+   Licensed under the MIT License.
+
+7. SenseVoice (https://github.com/FunAudioLLM/SenseVoice)
+   Copyright (c) 2024-2026 Alibaba DAMO Academy
+   Licensed under the Apache License 2.0.
+
+8. Matcha-TTS (https://github.com/shivammehta25/Matcha-TTS)
+   Copyright (c) 2023-2026 Shivam Mehta
+   Licensed under the Apache License 2.0.
+
+9. Kokoro (https://github.com/hexgrad/Kokoro-82M)
+   Copyright (c) 2024-2026 hexgrad
+   Licensed under the Apache License 2.0.
+
+10. Vocos (https://github.com/gemelo-ai/vocos)
+    Copyright (c) 2023-2026 gemelo.ai
+    Licensed under the MIT License.
+
+11. Silero VAD (https://github.com/snakers4/silero-vad)
+    Copyright (c) 2020-2026 Silero Team
+    Licensed under the MIT License.
+
+12. espeak-ng (https://github.com/espeak-ng/espeak-ng)
+    Copyright (c) 2015-2026 eSpeak NG Contributors
+    Licensed under the GNU General Public License v3.0 or later.
+
+13. cppjieba (https://github.com/yanyiwu/cppjieba)
+    Copyright (c) 2014-2026 yanyiwu
+    Licensed under the MIT License.
+
+14. cpp-pinyin (https://github.com/wolfgitpr/cpp-pinyin)
+    Copyright (c) 2024-2026 wolfgitpr
+    Licensed under the Apache License 2.0.
+
+15. nlohmann/json (https://github.com/nlohmann/json)
+    Copyright (c) 2013-2026 Niels Lohmann
+    Licensed under the MIT License.
+
+16. WebRTC Audio Processing (https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing)
+    Copyright (c) 2011-2026 The WebRTC Project Authors
+    Licensed under the BSD 3-Clause License.
+
+17. Abseil (https://github.com/abseil/abseil-cpp)
+    Copyright (c) 2017-2026 The Abseil Authors
+    Licensed under the Apache License 2.0.
+
+18. pybind11 (https://github.com/pybind/pybind11)
+    Copyright (c) 2016-2026 Wenzel Jakob
+    Licensed under the BSD 3-Clause License.
+
+19. ollama-hpp (https://github.com/jmont-dev/ollama-hpp)
+    Copyright (c) 2024 jmont-dev
+    Licensed under the MIT License.

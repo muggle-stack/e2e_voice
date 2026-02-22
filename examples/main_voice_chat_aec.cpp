@@ -106,7 +106,7 @@ void signalHandler(int sig) {
 
 // Engine selection result from parsing "--tts" argument
 struct EngineSelection {
-    SpacemiT::BackendType backend;
+    Evo::BackendType backend;
     std::string voice;  // Only used by Kokoro
 };
 
@@ -248,7 +248,7 @@ void printVoiceList() {
 
 EngineSelection parseEngine(const std::string& spec) {
     EngineSelection sel;
-    sel.backend = SpacemiT::BackendType::MATCHA_ZH;
+    sel.backend = Evo::BackendType::MATCHA_ZH;
 
     // Split on ':'
     auto colon = spec.find(':');
@@ -257,11 +257,11 @@ EngineSelection parseEngine(const std::string& spec) {
 
     if (engine == "matcha") {
         if (variant.empty() || variant == "zh") {
-            sel.backend = SpacemiT::BackendType::MATCHA_ZH;
+            sel.backend = Evo::BackendType::MATCHA_ZH;
         } else if (variant == "en") {
-            sel.backend = SpacemiT::BackendType::MATCHA_EN;
+            sel.backend = Evo::BackendType::MATCHA_EN;
         } else if (variant == "zh-en" || variant == "zhen") {
-            sel.backend = SpacemiT::BackendType::MATCHA_ZH_EN;
+            sel.backend = Evo::BackendType::MATCHA_ZH_EN;
         } else {
             std::cerr << "错误: 未知 Matcha 变体 '" << variant << "'\n"
                       << "可用变体: zh, en, zh-en\n";
@@ -271,7 +271,7 @@ EngineSelection parseEngine(const std::string& spec) {
     }
 
     if (engine == "kokoro") {
-        sel.backend = SpacemiT::BackendType::KOKORO;
+        sel.backend = Evo::BackendType::KOKORO;
         sel.voice = resolveVoiceName(variant);
         return sel;
     }
@@ -534,7 +534,7 @@ void listAudioDevices() {
     std::cout << getTimestamp() << " ========================================\n\n";
 
     std::cout << getTimestamp() << " 输入设备 (麦克风):\n";
-    auto input_devices = SpaceAudio::AudioDuplex::ListInputDevices();
+    auto input_devices = EvoAudio::AudioDuplex::ListInputDevices();
     if (input_devices.empty()) {
         std::cout << getTimestamp() << "   (无可用设备)\n";
     } else {
@@ -544,7 +544,7 @@ void listAudioDevices() {
     }
 
     std::cout << getTimestamp() << " \n输出设备 (扬声器):\n";
-    auto output_devices = SpaceAudio::AudioDuplex::ListOutputDevices();
+    auto output_devices = EvoAudio::AudioDuplex::ListOutputDevices();
     if (output_devices.empty()) {
         std::cout << getTimestamp() << "   (无可用设备)\n";
     } else {
@@ -716,15 +716,15 @@ int main(int argc, char* argv[]) {
     // -------------------------------------------------------------------------
     // 1. 初始化 LLM 引擎
     // -------------------------------------------------------------------------
-    SpacemiT::LlmConfig llm_config;
+    Evo::LlmConfig llm_config;
     if (!cfg.llm_url.empty()) {
-        llm_config = SpacemiT::LlmConfig::CloudAPI(cfg.llm_url, "", cfg.llm_model);
+        llm_config = Evo::LlmConfig::CloudAPI(cfg.llm_url, "", cfg.llm_model);
     } else {
-        llm_config = SpacemiT::LlmConfig::Ollama(cfg.llm_model);
+        llm_config = Evo::LlmConfig::Ollama(cfg.llm_model);
     }
     llm_config = llm_config.withMaxTokens(cfg.max_tokens);
 
-    auto llm = std::make_shared<SpacemiT::LlmEngine>(llm_config);
+    auto llm = std::make_shared<Evo::LlmEngine>(llm_config);
 
     if (cfg.llm_url.empty()) {
         std::cout << getTimestamp() << " [1/5] 检查 Ollama..." << std::flush;
@@ -755,11 +755,11 @@ int main(int argc, char* argv[]) {
     // -------------------------------------------------------------------------
     std::cout << getTimestamp() << " [2/5] 初始化 VAD..." << std::flush;
 
-    auto vad_config = SpacemiT::VadConfig::Silero()
+    auto vad_config = Evo::VadConfig::Silero()
         .withTriggerThreshold(cfg.vad_threshold)
         .withStopThreshold(cfg.vad_threshold - 0.15f);
 
-    auto vad = std::make_shared<SpacemiT::VadEngine>(vad_config);
+    auto vad = std::make_shared<Evo::VadEngine>(vad_config);
     if (!vad->IsInitialized()) {
         std::cerr << "\n" << getTimestamp() << " 错误: VAD 初始化失败\n";
         return 1;
@@ -770,7 +770,7 @@ int main(int argc, char* argv[]) {
     // 3. 初始化 ASR
     // -------------------------------------------------------------------------
     std::cout << getTimestamp() << " [3/5] 初始化 ASR..." << std::flush;
-    auto asr = std::make_shared<SpacemiT::AsrEngine>();
+    auto asr = std::make_shared<Evo::AsrEngine>();
     if (!asr->IsInitialized()) {
         std::cerr << "\n" << getTimestamp() << " 错误: ASR 初始化失败\n";
         return 1;
@@ -784,23 +784,23 @@ int main(int argc, char* argv[]) {
 
     auto selection = parseEngine(cfg.tts_type);
 
-    SpacemiT::TtsConfig tts_cfg;
+    Evo::TtsConfig tts_cfg;
     tts_cfg.backend = selection.backend;
 
-    if (selection.backend == SpacemiT::BackendType::KOKORO && !selection.voice.empty()) {
+    if (selection.backend == Evo::BackendType::KOKORO && !selection.voice.empty()) {
         tts_cfg.voice = selection.voice;
     }
 
     int tts_sample_rate;
     switch (selection.backend) {
-        case SpacemiT::BackendType::MATCHA_ZH:
-        case SpacemiT::BackendType::MATCHA_EN:
+        case Evo::BackendType::MATCHA_ZH:
+        case Evo::BackendType::MATCHA_EN:
             tts_sample_rate = 22050;
             break;
-        case SpacemiT::BackendType::MATCHA_ZH_EN:
+        case Evo::BackendType::MATCHA_ZH_EN:
             tts_sample_rate = 16000;
             break;
-        case SpacemiT::BackendType::KOKORO:
+        case Evo::BackendType::KOKORO:
             tts_sample_rate = 24000;
             break;
         default:
@@ -808,7 +808,7 @@ int main(int argc, char* argv[]) {
     }
     tts_cfg.sample_rate = tts_sample_rate;
 
-    auto tts = std::make_shared<SpacemiT::TtsEngine>(tts_cfg);
+    auto tts = std::make_shared<Evo::TtsEngine>(tts_cfg);
     if (!tts->IsInitialized()) {
         std::cerr << "\n" << getTimestamp() << " 错误: TTS 初始化失败\n";
         return 1;
@@ -850,7 +850,7 @@ int main(int argc, char* argv[]) {
     bool mcp_enabled = false;
     std::unique_ptr<mcp::MCPManager> mcp_manager;
     std::string llm_tools_json;
-    std::vector<SpacemiT::ChatMessage> conversation_messages;
+    std::vector<Evo::ChatMessage> conversation_messages;
     std::thread registry_poll_thread;
     std::mutex tools_mutex;  // 保护 llm_tools_json 更新
     std::set<std::string> known_servers;  // 已知服务器集合
@@ -921,7 +921,7 @@ int main(int argc, char* argv[]) {
             }
 
             // 初始化对话消息（使用配置的 system_prompt）
-            conversation_messages.push_back(SpacemiT::ChatMessage::System(mcp_cfg.system_prompt));
+            conversation_messages.push_back(Evo::ChatMessage::System(mcp_cfg.system_prompt));
 
             // 启动注册中心轮询线程（如果配置了 registry_url）
             if (!mcp_cfg.registry_url.empty()) {
@@ -1072,7 +1072,7 @@ int main(int argc, char* argv[]) {
         // MCP 模式：支持工具调用
         if (mcp_enabled) {
             // 添加用户消息
-            conversation_messages.push_back(SpacemiT::ChatMessage::User(text));
+            conversation_messages.push_back(Evo::ChatMessage::User(text));
 
             const int MAX_TOOL_ROUNDS = 10;
             int round = 0;
@@ -1123,7 +1123,7 @@ int main(int argc, char* argv[]) {
 
                     // 添加 assistant 消息（带 tool_calls）
                     conversation_messages.push_back(
-                        SpacemiT::ChatMessage::Assistant(result.content, result.tool_calls_json));
+                        Evo::ChatMessage::Assistant(result.content, result.tool_calls_json));
 
                     // 解析 tool_calls JSON 并执行
                     try {
@@ -1159,7 +1159,7 @@ int main(int argc, char* argv[]) {
                             // 添加 tool 消息
                             std::string tc_id = tc.value("id", "");
                             conversation_messages.push_back(
-                                SpacemiT::ChatMessage::Tool(result_text, tc_id));
+                                Evo::ChatMessage::Tool(result_text, tc_id));
                         }
                     } catch (const std::exception& e) {
                         std::cerr << getTimestamp() << " [MCP] 工具调用解析错误: " << e.what() << std::endl;
@@ -1173,7 +1173,7 @@ int main(int argc, char* argv[]) {
 
                 // 没有工具调用，添加最终响应
                 conversation_messages.push_back(
-                    SpacemiT::ChatMessage::Assistant(result.content));
+                    Evo::ChatMessage::Assistant(result.content));
 
                 // 处理残留句子
                 if (!g_barge_in) {

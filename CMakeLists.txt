@@ -84,7 +84,7 @@ else()
 endif()
 
 # Options
-option(USE_MCP "Enable MCP (Model Context Protocol) support" OFF)
+option(USE_MCP "Enable MCP (Model Context Protocol) support" ON)
 option(USE_AEC "Enable WebRTC AEC (Acoustic Echo Cancellation) for barge-in support" ON)
 
 # Add mcp library (Model Context Protocol)
@@ -198,7 +198,7 @@ if(USE_AEC)
     target_compile_definitions(voice_chat_aec PRIVATE USE_AEC)
 
     target_link_libraries(voice_chat_aec
-        space_audio
+        evo_audio
         audio_resampler
         stt
         tts

@@ -1,7 +1,7 @@
 /**
  * AecDuplexProcessor Implementation
  *
- * Integrates WebRTC APM with SpaceAudio::AudioDuplex.
+ * Integrates WebRTC APM with EvoAudio::AudioDuplex.
  * Provides echo cancellation for full-duplex audio.
  * Barge-in detection should be done at the application layer using VAD.
  */
@@ -123,7 +123,7 @@ bool AecDuplexProcessor::initialize() {
               << delay_samples_ << " samples)" << std::endl;
 
     // Create AudioDuplex
-    duplex_ = std::make_unique<SpaceAudio::AudioDuplex>(
+    duplex_ = std::make_unique<EvoAudio::AudioDuplex>(
         config_.input_device,
         config_.output_device
     );
