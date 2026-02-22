@@ -1,21 +1,21 @@
 [submodule "modules/audio"]
 	path = modules/audio
-	url = git@github.com:muggle-stack/evo_audio.git
+	url = https://github.com/muggle-stack/evo_audio.git
 [submodule "modules/stt"]
 	path = modules/stt
-	url = git@github.com:muggle-stack/evo_stt.git
+	url = https://github.com/muggle-stack/evo_stt.git
 [submodule "modules/tts"]
 	path = modules/tts
-	url = git@github.com:muggle-stack/evo_tts.git
+	url = https://github.com/muggle-stack/evo_tts.git
 [submodule "modules/vad"]
 	path = modules/vad
-	url = git@github.com:muggle-stack/evo_vad.git
+	url = https://github.com/muggle-stack/evo_vad.git
 [submodule "modules/llm"]
 	path = modules/llm
-	url = git@github.com:muggle-stack/evo_llm.git
+	url = https://github.com/muggle-stack/evo_llm.git
 [submodule "modules/mcp"]
 	path = modules/mcp
-	url = git@github.com:muggle-stack/evo_mcp.git
+	url = https://github.com/muggle-stack/evo_mcp.git
 [submodule "modules/webrtc-audio-processing"]
 	path = modules/webrtc-audio-processing
 	url = https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing.git
