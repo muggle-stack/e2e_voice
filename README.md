@@ -4,6 +4,23 @@ C++17 端到端中文智能语音对话系统，集成 ASR（语音识别）、L
 
 [English](README_EN.md)
 
+> [!IMPORTANT]
+> **分支说明**
+>
+> - **`master` 分支**：保留原始单体架构代码，**不再更新**
+> - **`refactor` 分支**：当前活跃开发分支，后续所有开发基于此分支
+>
+> **重构改进（master → refactor）**
+>
+> 基于 288 个文件变更（净减少 ~136 万行代码），核心改进如下：
+>
+> 1. **模块化架构** — 6 个核心模块（audio / stt / tts / vad / llm / mcp）拆分为独立 Git 子仓库（submodule），可单独开发、测试、复用
+> 2. **全双工语音对话** — 新增 WebRTC AEC 回声消除管道（`voice_chat_aec`），支持 Barge-in 打断，替代原有半双工方案
+> 3. **去除冗余代码** — 移除内嵌的 third_party（cppjieba、cpp-pinyin、cpp-mcp 等），改用 CMake FetchContent 按需拉取
+> 4. **统一 API 规范** — 每个模块提供标准化的 `*_api.hpp` 公共头文件和 `API.md` 文档
+> 5. **Python 绑定** — audio / stt / tts / vad 提供 pybind11 接口，支持 `pip install -e .`
+> 6. **清理遗留代码** — 移除旧的 Python 脚本、遗留 C++ 示例、build.sh 等
+
 ## 特性
 
 - **全双工对话** — WebRTC AEC 回声消除 + 噪声抑制，支持 Barge-in 打断

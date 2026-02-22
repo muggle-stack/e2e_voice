@@ -4,6 +4,23 @@ A C++17 end-to-end Chinese intelligent voice dialogue system integrating ASR (Sp
 
 [中文](README.md)
 
+> [!IMPORTANT]
+> **Branch Notice**
+>
+> - **`master` branch**: Retains the original monolithic codebase and is **no longer updated**
+> - **`refactor` branch**: The current active development branch — all future development is based on this branch
+>
+> **Key Improvements (master → refactor)**
+>
+> Based on 288 file changes (net reduction of ~1.36 million lines of code):
+>
+> 1. **Modular Architecture** — 6 core modules (audio / stt / tts / vad / llm / mcp) split into independent Git submodules, enabling standalone development, testing, and reuse
+> 2. **Full-Duplex Voice Conversation** — New WebRTC AEC echo cancellation pipeline (`voice_chat_aec`) with Barge-in support, replacing the previous half-duplex approach
+> 3. **Removed Bloat** — Eliminated embedded third_party sources (cppjieba, cpp-pinyin, cpp-mcp, etc.), replaced with CMake FetchContent for on-demand fetching
+> 4. **Unified API Convention** — Each module provides a standardized `*_api.hpp` public header and `API.md` documentation
+> 5. **Python Bindings** — audio / stt / tts / vad provide pybind11 interfaces, installable via `pip install -e .`
+> 6. **Legacy Cleanup** — Removed old Python scripts, legacy C++ examples, build.sh, and other obsolete files
+
 ## Features
 
 - **Full-Duplex Conversation** — WebRTC AEC echo cancellation + noise suppression with Barge-in support

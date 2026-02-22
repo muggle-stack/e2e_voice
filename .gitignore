@@ -1,2 +1,22 @@
+build/
+*.so
+*.whl
 __pycache__/
-.env
+*.onnx
+*.pyc
+# Compiled
+*.so
+*.o
+*.pyc
+__pycache__/
+*.pyo
+
+# Packages
+*.whl
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Cache
+.cache/
