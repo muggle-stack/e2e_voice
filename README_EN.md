@@ -193,9 +193,11 @@ MIT License — See [LICENSE](LICENSE)
 ## Acknowledgements
 
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) — High-performance inference engine
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) — High-performance LLM inference engine
+- [Ollama](https://github.com/ollama/ollama) — Local LLM runtime and management
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — Speech recognition model
 - [Matcha-TTS](https://github.com/shivammehta25/Matcha-TTS) — Text-to-speech model
-- [Kokoro](https://github.com/hexgrad/Kokoro-82M) — Multi-voice speech synthesis
+- [Kokoro](https://github.com/hexgrad/kokoro) — Multi-voice text-to-speech
 - [Vocos](https://github.com/gemelo-ai/vocos) — Vocoder
 - [Silero VAD](https://github.com/snakers4/silero-vad) — Voice activity detection
 - [WebRTC Audio Processing](https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing) — Echo cancellation / noise suppression

@@ -193,9 +193,11 @@ MIT License — 详见 [LICENSE](LICENSE)
 ## 致谢
 
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) — 高性能推理引擎
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) — 高性能 LLM 推理引擎
+- [Ollama](https://github.com/ollama/ollama) — 本地 LLM 运行与管理
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) — 语音识别模型
 - [Matcha-TTS](https://github.com/shivammehta25/Matcha-TTS) — 语音合成模型
-- [Kokoro](https://github.com/hexgrad/Kokoro-82M) — 多音色语音合成
+- [Kokoro](https://github.com/hexgrad/kokoro) — 多音色语音合成
 - [Vocos](https://github.com/gemelo-ai/vocos) — 声码器
 - [Silero VAD](https://github.com/snakers4/silero-vad) — 语音活动检测
 - [WebRTC Audio Processing](https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing) — 回声消除 / 噪声抑制
