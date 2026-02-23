@@ -1,6 +1,10 @@
 # E2E Voice - 端到端语音对话系统
 
-C++17 端到端中文智能语音对话系统，集成 ASR（语音识别）、LLM（大语言模型）、TTS（语音合成）、VAD（语音活动检测）和 AEC（全双工回声消除）。
+C++17 端到端智能语音对话系统，集成 ASR（语音识别）、LLM（大语言模型）、TTS（语音合成）、VAD（语音活动检测）和 AEC（全双工回声消除）。
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/muggle-stack/e2e_voice/refactor/assets/logo.svg" alt="e2e_voice" width="800"/>
+</p>
 
 [English](README_EN.md)
 
@@ -35,7 +39,7 @@ C++17 端到端中文智能语音对话系统，集成 ASR（语音识别）、L
 
 ### 全双工 AEC 管道
 
-![voice_chat_aec 链路图](docs/voice_chat_aec_pipeline.png)
+![voice_chat_aec 链路图](assets/voice_chat_aec_pipeline.png)
 
 ### 模块化架构
 

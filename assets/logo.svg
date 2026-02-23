@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" style="stop-color:#0c1f3a"/>
+      <stop offset="100%" style="stop-color:#050d18"/>
+    </radialGradient>
+    <linearGradient id="neon1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00d4ff"/>
+      <stop offset="50%" style="stop-color:#0891b2"/>
+      <stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="neon2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="textG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#22d3ee"/>
+      <stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+    <filter id="neonGlow">
+      <feGaussianBlur stdDeviation="5" result="blur1"/>
+      <feGaussianBlur stdDeviation="10" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="bigGlow">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+    <filter id="midGlow">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="frame">
+      <rect x="0" y="0" width="1200" height="300" rx="20" ry="20"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <!-- Background -->
+    <rect width="1200" height="300" fill="url(#bg)"/>
+
+    <!-- Atmospheric glows -->
+    <ellipse cx="350" cy="150" rx="250" ry="120" fill="#0891b2" opacity="0.04" filter="url(#bigGlow)"/>
+    <ellipse cx="350" cy="150" rx="120" ry="80" fill="#7c3aed" opacity="0.035" filter="url(#bigGlow)"/>
+
+    <!-- Concentric ripple rings around waveform area -->
+    <circle cx="350" cy="150" r="130" fill="none" stroke="url(#neon2)" stroke-width="0.5" opacity="0.08"/>
+    <circle cx="350" cy="150" r="105" fill="none" stroke="url(#neon2)" stroke-width="0.6" opacity="0.1"/>
+
+    <!-- Particles -->
+    <g opacity="0.35">
+      <circle cx="80" cy="60" r="1.2" fill="#22d3ee"/>
+      <circle cx="620" cy="40" r="1" fill="#a78bfa"/>
+      <circle cx="550" cy="250" r="1.2" fill="#06b6d4"/>
+      <circle cx="150" cy="260" r="1" fill="#8b5cf6"/>
+      <circle cx="500" cy="70" r="1" fill="#22d3ee"/>
+      <circle cx="680" cy="200" r="1" fill="#a78bfa"/>
+    </g>
+
+    <!-- Main soundwave -->
+    <g filter="url(#neonGlow)">
+      <path d="M 100 150
+               Q 120 150, 140 130
+               Q 160 110, 180 150
+               Q 200 190, 220 120
+               Q 240 50, 260 150
+               Q 280 250, 300 110
+               Q 315 30, 335 150
+               Q 348 240, 365 90
+               Q 375 30, 390 150
+               Q 405 250, 420 120
+               Q 440 50, 460 150
+               Q 480 210, 500 130
+               Q 515 90, 530 150
+               Q 545 180, 560 145
+               Q 575 130, 600 150"
+            fill="none" stroke="url(#neon1)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+      <!-- Echo waveform -->
+      <path d="M 100 150
+               Q 120 150, 140 130
+               Q 160 110, 180 150
+               Q 200 190, 220 120
+               Q 240 50, 260 150
+               Q 280 250, 300 110
+               Q 315 30, 335 150
+               Q 348 240, 365 90
+               Q 375 30, 390 150
+               Q 405 250, 420 120
+               Q 440 50, 460 150
+               Q 480 210, 500 130
+               Q 515 90, 530 150
+               Q 545 180, 560 145
+               Q 575 130, 600 150"
+            fill="none" stroke="url(#neon1)" stroke-width="1.2" stroke-linecap="round" opacity="0.25" transform="translate(0, 6)"/>
+    </g>
+
+    <!-- Peak glow point -->
+    <circle cx="335" cy="90" r="4" fill="#22d3ee" filter="url(#midGlow)" opacity="0.8"/>
+    <circle cx="335" cy="90" r="1.8" fill="#ffffff" opacity="0.7"/>
+
+    <!-- Scan line -->
+    <line x1="80" y1="150" x2="620" y2="150" stroke="#22d3ee" stroke-width="0.3" opacity="0.12"/>
+
+    <!-- Tick marks -->
+    <g stroke="#22d3ee" stroke-width="0.4" opacity="0.08">
+      <line x1="120" y1="146" x2="120" y2="154"/>
+      <line x1="180" y1="147" x2="180" y2="153"/>
+      <line x1="240" y1="146" x2="240" y2="154"/>
+      <line x1="300" y1="147" x2="300" y2="153"/>
+      <line x1="360" y1="146" x2="360" y2="154"/>
+      <line x1="420" y1="147" x2="420" y2="153"/>
+      <line x1="480" y1="146" x2="480" y2="154"/>
+      <line x1="540" y1="147" x2="540" y2="153"/>
+    </g>
+
+    <!-- Divider line -->
+    <line x1="660" y1="70" x2="660" y2="230" stroke="#22d3ee" stroke-width="0.5" opacity="0.1"/>
+
+    <!-- "e2e" large text -->
+    <text x="900" y="155" font-family="'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" font-size="80" font-weight="800" fill="url(#textG)" text-anchor="middle" letter-spacing="-2" opacity="0.95">e2e_voice</text>
+
+    <!-- Tagline -->
+    <text x="900" y="195" font-family="'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" font-size="14" fill="#94a3b8" text-anchor="middle" letter-spacing="5" opacity="0.5">END-TO-END VOICE FRAMEWORK</text>
+
+    <!-- Corner brackets -->
+    <g stroke="#22d3ee" stroke-width="1" fill="none" opacity="0.12">
+      <polyline points="15,35 15,15 35,15"/>
+      <polyline points="1165,15 1185,15 1185,35"/>
+      <polyline points="15,265 15,285 35,285"/>
+      <polyline points="1165,285 1185,285 1185,265"/>
+    </g>
+  </g>
+
+  <!-- Outer frame -->
+  <rect x="0" y="0" width="1200" height="300" rx="20" ry="20" fill="none" stroke="#22d3ee" stroke-width="0.6" opacity="0.08"/>
+</svg>

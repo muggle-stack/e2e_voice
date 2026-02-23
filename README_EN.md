@@ -1,6 +1,10 @@
 # E2E Voice - End-to-End Voice Dialogue System
 
-A C++17 end-to-end Chinese intelligent voice dialogue system integrating ASR (Speech Recognition), LLM (Large Language Model), TTS (Text-to-Speech), VAD (Voice Activity Detection), and AEC (Full-Duplex Echo Cancellation).
+A C++17 end-to-end intelligent voice dialogue system integrating ASR (Speech Recognition), LLM (Large Language Model), TTS (Text-to-Speech), VAD (Voice Activity Detection), and AEC (Full-Duplex Echo Cancellation).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/muggle-stack/e2e_voice/refactor/assets/logo.svg" alt="e2e_voice" width="800"/>
+</p>
 
 [中文](README.md)
 
@@ -35,7 +39,7 @@ A C++17 end-to-end Chinese intelligent voice dialogue system integrating ASR (Sp
 
 ### Full-Duplex AEC Pipeline
 
-![voice_chat_aec Pipeline](docs/voice_chat_aec_pipeline_en.png)
+![voice_chat_aec Pipeline](assets/voice_chat_aec_pipeline_en.png)
 
 ### Modular Architecture
 
