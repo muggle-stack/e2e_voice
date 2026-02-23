@@ -146,6 +146,44 @@ cmake -DUSE_MCP=ON .. && make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 | `--save-audio [file]` | 保存 AEC 处理后的音频 | `aec_debug.wav` |
 | `--mcp-config <path>` | MCP 配置文件（启用工具调用） | — |
 
+### MCP 工具调用（可选）
+
+通过 [MCP（Model Context Protocol）](modules/mcp/README.md) 扩展 LLM 的工具调用能力。编译时需启用 `USE_MCP=ON`。
+
+**快速体验：**
+
+```bash
+# 安装 Python 依赖
+pip install mcp starlette uvicorn psutil flask
+
+# 一键启动示例 MCP 服务（注册中心 + Calculator + TimeService + SystemMonitor）
+cd modules/mcp/examples && bash start_all_services.sh
+
+# 启动语音对话，连接注册中心自动发现工具
+./build/bin/voice_chat_aec --mcp-config modules/mcp/examples/config_registry.json
+```
+
+编辑 `config_registry.json` 可切换 MCP 工具调用使用的 LLM 后端：
+
+```json
+{
+  "backend": "ollama",                    // "ollama"（本地）或 "llama"（OpenAI 兼容 API）
+  "url": "http://localhost:11434",        // LLM API 地址
+  "model": "qwen2.5:7b",                 // 模型名称
+  "registry_url": "http://127.0.0.1:9000/mcp/services"
+}
+```
+
+**自定义扩展：**
+
+用户可以编写自己的 MCP 服务并注册到注册中心（默认端口 9000），`voice_chat_aec` 会自动发现新工具，无需重启：
+
+1. 用 [FastMCP](https://github.com/modelcontextprotocol/python-sdk) 编写 Python 服务
+2. 启动时注册到注册中心：`--registry http://127.0.0.1:9000`
+3. 语音对话中 LLM 即可调用新工具
+
+配置文件格式和传输方式详见 [MCP 模块文档](modules/mcp/README.md)。
+
 ### 组件演示
 
 各模块提供独立的可执行演示：

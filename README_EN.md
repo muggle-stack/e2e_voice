@@ -146,6 +146,44 @@ cmake -DUSE_MCP=ON .. && make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 | `--save-audio [file]` | Save AEC-processed audio | `aec_debug.wav` |
 | `--mcp-config <path>` | MCP config file (enable tool calling) | — |
 
+### MCP Tool Calling (Optional)
+
+Extend LLM tool-calling capabilities via [MCP (Model Context Protocol)](modules/mcp/README.md). Requires `USE_MCP=ON` at build time.
+
+**Quick Start:**
+
+```bash
+# Install Python dependencies
+pip install mcp starlette uvicorn psutil flask
+
+# Start example MCP services (registry + Calculator + TimeService + SystemMonitor)
+cd modules/mcp/examples && bash start_all_services.sh
+
+# Start voice chat, auto-discover tools from the registry
+./build/bin/voice_chat_aec --mcp-config modules/mcp/examples/config_registry.json
+```
+
+Edit `config_registry.json` to switch the LLM backend used for MCP tool calling:
+
+```json
+{
+  "backend": "ollama",                    // "ollama" (local) or "llama" (OpenAI-compatible API)
+  "url": "http://localhost:11434",        // LLM API URL
+  "model": "qwen2.5:7b",                 // Model name
+  "registry_url": "http://127.0.0.1:9000/mcp/services"
+}
+```
+
+**Custom Extensions:**
+
+You can write your own MCP services and register them with the registry server (default port 9000). `voice_chat_aec` will auto-discover new tools without restarting:
+
+1. Write a Python service using [FastMCP](https://github.com/modelcontextprotocol/python-sdk)
+2. Register on startup: `--registry http://127.0.0.1:9000`
+3. The LLM can now call your tools during voice conversation
+
+See [MCP module documentation](modules/mcp/README.md) for config file format and transport options.
+
 ### Component Demos
 
 Each module provides standalone executable demos:
